@@ -23,10 +23,6 @@ export const metadata: Metadata = {
   },
   description:
     "Production-ready bulk email campaign platform built with Next.js and Supabase.",
-  icons: {
-    icon: "/mhenbulk-icon-square.png",
-    apple: "/mhenbulk-icon-square.png",
-  },
   openGraph: {
     title: "Mhenbulk",
     description: "Send more. Reach more.",
