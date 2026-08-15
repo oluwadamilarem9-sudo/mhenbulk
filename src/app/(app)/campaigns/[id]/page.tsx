@@ -12,6 +12,7 @@ import {
 import { CampaignDetail } from "@/features/campaigns/components/campaign-detail";
 import { CampaignForm } from "@/features/campaigns/components/campaign-form";
 import { getCampaign } from "@/features/campaigns/queries";
+import { listEmailAccounts } from "@/features/email-accounts/queries";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { createClient } from "@/lib/supabase/server";
 
@@ -45,6 +46,8 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
     notFound();
   }
 
+  const { accounts } = await listEmailAccounts(user.id);
+
   const { data: eligibleContacts } = await supabase
     .from("contacts")
     .select("id, first_name, last_name, email")
@@ -66,6 +69,12 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
     unsubscribeUrl: "#preview",
   });
 
+  const senderLabel = campaign.from_email
+    ? campaign.from_name
+      ? `${campaign.from_name} <${campaign.from_email}>`
+      : campaign.from_email
+    : null;
+
   return (
     <div className="space-y-8">
       <div className="text-sm">
@@ -81,6 +90,7 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
         previewHtml={preview.html}
         failures={failures}
         engagement={engagement}
+        senderLabel={senderLabel}
       />
 
       {campaign.status === "draft" ? (
@@ -88,11 +98,12 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
           <CardHeader>
             <CardTitle>Edit campaign</CardTitle>
             <CardDescription>
-              Update the name, subject, or content. Editing is locked once sending starts.
+              Update the name, subject, content, or sending account. Editing is locked
+              once sending starts.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <CampaignForm campaign={campaign} />
+            <CampaignForm campaign={campaign} emailAccounts={accounts} />
           </CardContent>
         </Card>
       ) : null}

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { listEmailAccounts } from "@/features/email-accounts/queries";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
@@ -30,9 +32,11 @@ export default async function SettingsPage() {
     .eq("id", user.id)
     .maybeSingle();
 
-  const provider = process.env.EMAIL_PROVIDER === "resend" && process.env.RESEND_API_KEY
-    ? "resend"
-    : "console";
+  const { accounts } = await listEmailAccounts(user.id);
+  const connected = accounts.filter(
+    (account) =>
+      account.status === "connected" || account.status === "rate_limited",
+  );
 
   return (
     <div className="space-y-6">
@@ -41,7 +45,7 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Workspace profile and email provider configuration.
+          Workspace profile and connected sending accounts.
         </p>
       </div>
 
@@ -76,37 +80,40 @@ export default async function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Email delivery</CardTitle>
+          <CardTitle>Email accounts</CardTitle>
           <CardDescription>
-            The provider adapter is swappable via server environment variables — no code
-            changes needed to move vendors.
+            Campaigns send through your connected Gmail account. A Mhenbulk
+            domain is not required.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-slate-600">
-          <div className="flex items-center gap-2">
-            <span>Active provider:</span>
-            {provider === "resend" ? (
-              <Badge variant="success">Resend</Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <span>Connected Gmail accounts:</span>
+            {connected.length > 0 ? (
+              <Badge variant="success">{connected.length}</Badge>
             ) : (
-              <Badge variant="warning">Console (development)</Badge>
+              <Badge variant="warning">None</Badge>
             )}
           </div>
-          {provider === "console" ? (
-            <p>
-              The console provider logs emails to the server terminal instead of
-              delivering them. Set <code>EMAIL_PROVIDER=resend</code>,{" "}
-              <code>RESEND_API_KEY</code>, and <code>EMAIL_FROM</code> in{" "}
-              <code>.env.local</code> to send real email.
-            </p>
+          {connected.length > 0 ? (
+            <ul className="space-y-1">
+              {connected.map((account) => (
+                <li key={account.id} className="font-medium text-slate-900">
+                  {account.display_name
+                    ? `${account.display_name} <${account.email}>`
+                    : account.email}
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p>
-              Sending from <code>{process.env.EMAIL_FROM || "onboarding@resend.dev"}</code>.
-            </p>
+            <p>Connect Gmail to send campaigns from your own address.</p>
           )}
-          <p>
-            Secrets stay server-side. All API inputs are validated with Zod, and Row
-            Level Security scopes every table to its owner.
-          </p>
+          <Link
+            href="/settings/email-accounts"
+            className="inline-flex text-sm font-medium text-indigo-600 hover:underline"
+          >
+            Manage email accounts →
+          </Link>
         </CardContent>
       </Card>
     </div>

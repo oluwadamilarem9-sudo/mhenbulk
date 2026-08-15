@@ -30,6 +30,42 @@ function isAuthorized(request: Request): boolean {
   );
 }
 
+async function resumeRateLimitedAccounts() {
+  const supabase = createServiceRoleClient();
+  const nowIso = new Date().toISOString();
+
+  const { data: accounts } = await supabase
+    .from("email_accounts")
+    .select("id, user_id")
+    .eq("status", "rate_limited")
+    .not("rate_limited_until", "is", null)
+    .lte("rate_limited_until", nowIso)
+    .limit(50);
+
+  for (const account of accounts ?? []) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "connected",
+        rate_limited_until: null,
+        last_error: null,
+      })
+      .eq("id", account.id);
+
+    await supabase
+      .from("campaigns")
+      .update({
+        status: "sending",
+        paused_at: null,
+        pause_reason: null,
+      })
+      .eq("user_id", account.user_id)
+      .eq("email_account_id", account.id)
+      .eq("status", "paused")
+      .eq("pause_reason", "rate_limit");
+  }
+}
+
 async function handleWorkerRequest(request: Request) {
   if (!process.env.CRON_SECRET) {
     return Response.json(
@@ -44,6 +80,8 @@ async function handleWorkerRequest(request: Request) {
 
   const startedAt = Date.now();
   const supabase = createServiceRoleClient();
+
+  await resumeRateLimitedAccounts();
 
   const { data: campaigns, error } = await supabase
     .from("campaigns")
@@ -102,7 +140,7 @@ async function handleWorkerRequest(request: Request) {
   });
 }
 
-/** Vercel Cron calls this endpoint with GET. */
+/** Vercel Cron / Supabase Cron / external schedulers call this endpoint. */
 export async function GET(request: Request) {
   return handleWorkerRequest(request);
 }

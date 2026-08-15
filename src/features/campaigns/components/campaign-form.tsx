@@ -9,6 +9,8 @@ import {
 } from "@/features/campaigns/actions";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import type { CampaignRow } from "@/features/campaigns/queries";
+import type { EmailAccountPublic } from "@/features/email-accounts/schemas";
+import { SenderAccountSelect } from "@/features/email-accounts/components/sender-account-select";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,9 +22,10 @@ const initialState: CampaignActionState = {};
 
 type CampaignFormProps = {
   campaign?: CampaignRow;
+  emailAccounts: EmailAccountPublic[];
 };
 
-export function CampaignForm({ campaign }: CampaignFormProps) {
+export function CampaignForm({ campaign, emailAccounts }: CampaignFormProps) {
   const router = useRouter();
   const action = campaign ? updateCampaignAction : createCampaignAction;
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -33,6 +36,13 @@ export function CampaignForm({ campaign }: CampaignFormProps) {
 
       {state.error ? <Alert variant="error">{state.error}</Alert> : null}
       {state.success ? <Alert variant="success">{state.success}</Alert> : null}
+
+      <SenderAccountSelect
+        accounts={emailAccounts}
+        defaultValue={campaign?.email_account_id}
+        disabled={pending}
+        error={state.fieldErrors?.emailAccountId?.[0]}
+      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-2">
@@ -116,7 +126,7 @@ export function CampaignForm({ campaign }: CampaignFormProps) {
         >
           Cancel
         </Button>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || emailAccounts.length === 0}>
           {pending
             ? "Saving..."
             : campaign

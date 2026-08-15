@@ -2,6 +2,8 @@
 
 Production-quality bulk email campaign platform built with **Next.js (App Router)**, **TypeScript**, **Tailwind CSS**, and **Supabase**.
 
+Users connect their **own Gmail account** via Google OAuth. Campaign emails are sent as that user (for example `John <john@gmail.com>`). A Mhenbulk domain is **not** required for Gmail-connected sending.
+
 ## Features
 
 ### Authentication
@@ -9,40 +11,37 @@ Production-quality bulk email campaign platform built with **Next.js (App Router
 - Protected app shell (proxy session refresh + server-side checks)
 - Automatic profile creation via database trigger
 
+### Connected email accounts (Gmail)
+- Connect Gmail with Google OAuth (no Gmail password stored)
+- Minimum send scope: `gmail.send` (+ OpenID email/profile for identity)
+- OAuth tokens encrypted at rest (AES-256-GCM); credentials never exposed to the browser
+- Disconnect / reconnect / send test email from Settings → Email Accounts
+- Automatic access-token refresh; reauth pause when refresh fails
+
 ### Contacts
 - Create, edit, delete contacts (`first_name`, `last_name`, `email`)
 - CSV/TSV import with an `email` column; `first_name` and `last_name` are optional
-- Plain-text import with one email address per line (no CSV required)
-- Duplicate prevention via normalized-email unique constraint (database enforced)
+- Plain-text import with one email address per line
+- Duplicate prevention via normalized-email unique constraint
 - Unsubscribe/resubscribe toggle synced with the suppression list
 
 ### Campaigns
 - Create/edit campaigns with name, subject, HTML and plain-text content
-- Visual rich-text editor with headings, formatting, lists, links, and undo/redo
-- Optional HTML source mode for advanced editing
-- One-click insertion of personalization tokens
-- `{{first_name}}`, `{{last_name}}`, `{{email}}` personalization
+- **Sending account** dropdown (connected Gmail only — no typed From spoofing)
+- Visual rich-text editor with personalization tokens
 - Live preview with sample data and the compliance footer
-- Send a test email to your own address
+- Send a test email through the selected Gmail account to any address you enter
 - Recipient selection (all or per-contact checkboxes)
+- Pause / resume / cancel
 
 ### Email sending (queue)
-- Recipients are queued in `campaign_recipients`, never blasted at once
-- Small batches (5 per pass, spaced ~400ms) are processed by shared queue code
+- One individualized queue job per recipient (never BCC mass-send)
+- Configurable batch size / delay / retries via env
 - Secured background endpoint at `/api/cron/process-email-queue`
-- Vercel Cron runs the worker once daily on Hobby (more frequent schedules need Pro)
-- For more frequent background sending on Hobby, call the worker from any free external cron service
-- The campaign page also processes batches during local development and while the page is open
-- Temporary failures retried with exponential backoff (up to 3 attempts)
-- Pause/resume at any time; statuses and sent/failed timestamps stored per recipient
+- Prefer **Supabase Cron every minute** (see [`docs/supabase-cron-email-queue.md`](docs/supabase-cron-email-queue.md)); Vercel Hobby remains daily fallback
+- Temporary failures retried with backoff; Gmail quota/auth errors pause campaigns
+- Stuck `sending` claims recovered after lease expiry
 - Suppressed/unsubscribed contacts re-checked at send time and skipped
-- All outcomes recorded in `email_events`
-
-### Delivery tracking
-- Resend webhook endpoint at `/api/webhooks/resend` (Svix signature verified)
-- Records delivered, opened, clicked, bounced, and complaint events per recipient
-- Bounced and complained addresses are automatically suppressed
-- Campaign pages show unique-recipient engagement counts
 
 ### Compliance
 - Unsubscribe link (HMAC-signed token) appended to every campaign email
@@ -51,9 +50,9 @@ Production-quality bulk email campaign platform built with **Next.js (App Router
 
 ### Security
 - Row Level Security on every table — users only access their own data
-- Secrets (`SUPABASE_SERVICE_ROLE_KEY`, provider keys) stay server-side
+- `email_account_credentials` has no authenticated grants (service-role only)
+- Secrets stay server-side (`GOOGLE_CLIENT_SECRET`, encryption key, service role, cron)
 - All inputs validated server-side with Zod
-- Unsubscribe tokens verified with constant-time HMAC comparison
 
 ## Project structure
 
@@ -61,25 +60,33 @@ Production-quality bulk email campaign platform built with **Next.js (App Router
 src/
   app/
     (auth)/           login, signup
-    (app)/            dashboard, contacts, campaigns, settings (protected)
+    (app)/            dashboard, contacts, campaigns, settings
+    api/auth/google/  Gmail OAuth start + callback
+    api/cron/         background queue worker
     unsubscribe/      public unsubscribe endpoint
-  components/         shared UI + layout (sidebar, mobile nav)
   features/
-    auth/             schemas, actions, forms
-    contacts/         schemas, CSV parser, actions, queries, UI
-    campaigns/        schemas, actions (incl. queue processor), queries, UI
-    dashboard/        metrics queries and stat cards
+    email-accounts/   connected Gmail accounts UI + actions
+    campaigns/        authoring, queue worker, detail UI
+    contacts/         CRUD + import
   lib/
-    supabase/         typed clients (browser, server, service role), proxy helper
-    email/            provider adapter, template renderer, unsubscribe tokens
-    env.ts            validated environment configuration
-  proxy.ts            Next.js 16 session refresh + route protection
+    email/            providers (Gmail, Resend, console), render, unsubscribe
+    google/           OAuth helpers + scopes
+    crypto/           AES-GCM secret encryption
 supabase/
-  migrations/         0001_initial_schema.sql (tables, triggers, RLS)
+  migrations/         0001 initial schema, 0002 email accounts
+docs/
+  google-oauth-gmail-setup.md
+  supabase-cron-email-queue.md
 ```
 
-## Database tables
-`profiles`, `contacts`, `campaigns`, `campaign_recipients`, `email_events`, `suppression_list` — see [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql).
+## Database
+
+Apply both migrations in order:
+
+1. [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql)
+2. [`supabase/migrations/0002_email_accounts.sql`](supabase/migrations/0002_email_accounts.sql)
+
+Tables: `profiles`, `contacts`, `email_accounts`, `email_account_credentials`, `campaigns`, `campaign_recipients`, `email_events`, `suppression_list`.
 
 ## Local setup
 
@@ -93,19 +100,18 @@ npm install
 cp .env.example .env.local
 ```
 
-Required:
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3000` — used in unsubscribe links)
+Required for Gmail sending:
+- Supabase URL / anon key / service role key
+- `NEXT_PUBLIC_APP_URL`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `EMAIL_ACCOUNT_ENCRYPTION_KEY` (base64 32-byte key)
+- `UNSUBSCRIBE_SECRET` (32+ chars)
+- `CRON_SECRET` (32+ chars)
 
-Recommended:
-- `SUPABASE_SERVICE_ROLE_KEY` — required for the public unsubscribe endpoint
-- `CRON_SECRET` — a random 32+ character value protecting the background worker
-- `EMAIL_PROVIDER=resend` + `RESEND_API_KEY` + `EMAIL_FROM` for real delivery
-  (default `console` provider logs emails to the server terminal)
+Follow [`docs/google-oauth-gmail-setup.md`](docs/google-oauth-gmail-setup.md).
 
-### 3. Apply the database migration
-Run [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql) in the Supabase SQL editor, or with the CLI:
+### 3. Apply database migrations
+Run the SQL files in the Supabase SQL editor, or:
 
 ```bash
 npx supabase db push
@@ -118,6 +124,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+Expected local workflow:
+
+1. Create account
+2. Connect Gmail
+3. Import contacts
+4. Create campaign (select sending Gmail account)
+5. Send test email
+6. Start campaign → individualized queue → Gmail API send
+7. View progress / pause / resume / cancel
+
 ## Commands
 ```bash
 npm run dev        # development server
@@ -129,41 +145,39 @@ npm run typecheck  # TypeScript check
 
 ## How sending works
 
-1. Start a campaign → eligible (subscribed, non-suppressed) recipients are inserted into `campaign_recipients` with status `queued`.
-2. On Hobby, Vercel Cron runs the worker once per day. During local development (and while a campaign page is open), the same shared processor also runs. For more frequent background sending without Pro, use a free external cron to call the endpoint with your `CRON_SECRET`.
-3. Temporary provider failures (429/5xx/network) are re-queued with exponential backoff; permanent failures are marked `failed` with a timestamp.
-4. Pausing the campaign stops processing immediately; resuming picks up where it left off.
-5. When the queue drains, the campaign is marked `completed`.
-
-The queue service conditionally claims each recipient before sending, preventing duplicate sends when two workers overlap. Browser-triggered processing uses the authenticated RLS client; the cron uses a service-role client behind `CRON_SECRET`.
+1. Connect Gmail → encrypted refresh token stored server-side.
+2. Create a campaign bound to that email account.
+3. Start campaign → eligible recipients inserted into `campaign_recipients` as individual jobs.
+4. Worker resolves the campaign’s Gmail account, refreshes tokens if needed, and calls Gmail `users.messages.send`.
+5. Temporary failures are re-queued; quota/auth issues pause the campaign with a clear reason.
+6. `sent` means Gmail **accepted** the API request. Do not treat that as mailbox delivery proof.
 
 ## Background worker
 
-`vercel.json` schedules:
+See [`docs/supabase-cron-email-queue.md`](docs/supabase-cron-email-queue.md) for minute scheduling.
+
+`vercel.json` keeps a daily Hobby fallback:
 
 ```text
 GET /api/cron/process-email-queue
 Authorization: Bearer $CRON_SECRET
 ```
 
-Set `CRON_SECRET` and all other `.env.local` values in the deployment environment. Vercel automatically sends the authorization header for configured Cron Jobs. If your hosting plan does not support the five-minute schedule, use any external scheduler to call the same endpoint with the bearer token.
-
-To test locally:
+Local test:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
   http://localhost:3000/api/cron/process-email-queue
 ```
 
-## Delivery tracking (Resend webhooks)
+## Provider architecture
 
-1. Deploy the app so Resend can reach it (webhooks cannot call localhost).
-2. In Resend → **Webhooks** → Add endpoint: `https://your-app.example/api/webhooks/resend`.
-3. Subscribe to `email.delivered`, `email.opened`, `email.clicked`, `email.bounced`, and `email.complained`.
-4. Copy the endpoint's signing secret (`whsec_...`) into `RESEND_WEBHOOK_SECRET`.
-5. Enable open and click tracking for your domain in Resend for `opened`/`clicked` events.
+Campaign/queue code calls `provider.send()`. Implementations:
 
-Events are matched to recipients through the stored provider message id. Bounces and spam complaints automatically mark the contact as suppressed and add them to the suppression list. For local testing, forward webhooks with a tunnel (e.g. `ngrok http 3000`).
+- `GmailProvider` — user-owned OAuth sending (primary)
+- `OutlookProvider` — stub for future Microsoft 365 support
+- `ResendEmailProvider` / `ConsoleEmailProvider` — optional legacy/dev helpers
 
-## Swapping the email provider
-Implement `EmailProvider` in [`src/lib/email/provider.ts`](src/lib/email/provider.ts) (one `send()` method), register it in `getEmailProvider()`, and select it with `EMAIL_PROVIDER`. Campaign and queue code never touches vendor SDKs.
+## Delivery tracking note
+
+Resend webhooks remain available for Resend-based sends. Gmail API acceptance does not create delivered/open/click events by itself.

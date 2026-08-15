@@ -7,13 +7,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  */
 
 function getSecret(): string {
-  const secret =
-    process.env.UNSUBSCRIBE_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const secret = process.env.UNSUBSCRIBE_SECRET;
 
-  if (!secret) {
-    throw new Error("No secret available for signing unsubscribe tokens");
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "UNSUBSCRIBE_SECRET is required (32+ characters). Do not fall back to public keys.",
+    );
   }
 
   return secret;
@@ -35,7 +34,13 @@ export function verifyUnsubscribeToken(token: string): string | null {
     return null;
   }
 
-  const expected = sign(payload);
+  let expected: string;
+  try {
+    expected = sign(payload);
+  } catch {
+    return null;
+  }
+
   const expectedBuffer = Buffer.from(expected);
   const actualBuffer = Buffer.from(signature);
 
@@ -48,7 +53,6 @@ export function verifyUnsubscribeToken(token: string): string | null {
 
   try {
     const contactId = Buffer.from(payload, "base64url").toString("utf8");
-    // Basic UUID sanity check.
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(contactId)) {
       return null;
     }

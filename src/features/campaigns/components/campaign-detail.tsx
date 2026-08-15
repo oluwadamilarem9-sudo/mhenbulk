@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pause, Play, Send, Trash2 } from "lucide-react";
+import { Pause, Play, Send, Trash2, XCircle } from "lucide-react";
 
 import {
+  cancelCampaignAction,
   deleteCampaignAction,
   pauseCampaignAction,
   resumeCampaignAction,
@@ -18,6 +20,7 @@ import type {
   DeliveryFailure,
   EngagementStats,
 } from "@/features/campaigns/queries";
+import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { CampaignStatusBadge } from "@/features/campaigns/components/campaign-status-badge";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -28,9 +31,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { formatNumber } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 4000;
+const initialTestState: CampaignActionState = {};
 
 type EligibleContact = {
   id: string;
@@ -46,6 +52,7 @@ type CampaignDetailProps = {
   previewHtml: string;
   failures: DeliveryFailure[];
   engagement: EngagementStats;
+  senderLabel?: string | null;
 };
 
 export function CampaignDetail({
@@ -55,6 +62,7 @@ export function CampaignDetail({
   previewHtml,
   failures,
   engagement,
+  senderLabel,
 }: CampaignDetailProps) {
   const router = useRouter();
   const [message, setMessage] = useState<{ kind: "error" | "success"; text: string } | null>(
@@ -64,11 +72,16 @@ export function CampaignDetail({
     () => new Set(eligibleContacts.map((contact) => contact.id)),
   );
   const [busy, startTransition] = useTransition();
+  const [testState, testAction, testPending] = useActionState(
+    sendTestEmailAction,
+    initialTestState,
+  );
   const processingRef = useRef(false);
 
   const isDraft = campaign.status === "draft";
   const isSending = campaign.status === "sending";
   const isPaused = campaign.status === "paused";
+  const canCancel = isSending || isPaused;
 
   const allSelected = selectedIds.size === eligibleContacts.length;
 
@@ -76,6 +89,17 @@ export function CampaignDetail({
     if (stats.total === 0) return 0;
     return Math.round(((stats.sent + stats.failed + stats.skipped) / stats.total) * 100);
   }, [stats]);
+
+  const pauseMessage = useMemo(() => {
+    if (!isPaused) return null;
+    if (campaign.pause_reason === "auth_required") {
+      return "Your Gmail connection needs to be reauthorized.";
+    }
+    if (campaign.pause_reason === "rate_limit") {
+      return "Gmail sending quota was reached. The campaign has been paused.";
+    }
+    return "Sending is paused. Resume to continue processing the queue.";
+  }, [campaign.pause_reason, isPaused]);
 
   const runQueueBatch = useCallback(async () => {
     if (processingRef.current) return;
@@ -115,17 +139,6 @@ export function CampaignDetail({
     });
   }
 
-  function handleTestSend() {
-    startTransition(async () => {
-      const result = await sendTestEmailAction(campaign.id);
-      setMessage(
-        result.error
-          ? { kind: "error", text: result.error }
-          : { kind: "success", text: result.success ?? "Test email sent." },
-      );
-    });
-  }
-
   function handleStart() {
     if (selectedIds.size === 0) {
       setMessage({ kind: "error", text: "Select at least one contact." });
@@ -134,7 +147,7 @@ export function CampaignDetail({
 
     if (
       !window.confirm(
-        `Start sending this campaign to ${selectedIds.size} contact(s)? Emails are sent gradually in small batches.`,
+        `Start sending this campaign to ${selectedIds.size} contact(s)? Each recipient gets an individual email through your connected Gmail account.`,
       )
     ) {
       return;
@@ -168,6 +181,26 @@ export function CampaignDetail({
     });
   }
 
+  function handleCancel() {
+    if (
+      !window.confirm(
+        "Cancel this campaign? Remaining queued emails will be skipped. Messages already accepted by Gmail cannot be recalled.",
+      )
+    ) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await cancelCampaignAction(campaign.id);
+      setMessage(
+        result.error
+          ? { kind: "error", text: result.error }
+          : { kind: "success", text: result.success ?? "Campaign cancelled." },
+      );
+      router.refresh();
+    });
+  }
+
   function handleDelete() {
     if (!window.confirm(`Delete campaign "${campaign.name}"? This cannot be undone.`)) {
       return;
@@ -194,13 +227,27 @@ export function CampaignDetail({
             <CampaignStatusBadge status={campaign.status} />
           </div>
           <p className="mt-1 text-sm text-slate-500">Subject: {campaign.subject}</p>
+          {senderLabel ? (
+            <p className="mt-1 text-sm text-slate-500">
+              Sending as: <span className="font-medium text-slate-800">{senderLabel}</span>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-amber-700">
+              No sending account selected.{" "}
+              <Link href="/settings/email-accounts" className="underline">
+                Connect Gmail
+              </Link>
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={handleTestSend} disabled={busy}>
-            <Send className="h-4 w-4" />
-            Send test email
-          </Button>
+          {canCancel ? (
+            <Button variant="secondary" onClick={handleCancel} disabled={busy}>
+              <XCircle className="h-4 w-4" />
+              Cancel
+            </Button>
+          ) : null}
           {isSending || isPaused ? (
             <Button variant="secondary" onClick={handlePauseResume} disabled={busy}>
               {isSending ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -211,7 +258,7 @@ export function CampaignDetail({
             variant="ghost"
             className="text-rose-600 hover:bg-rose-50"
             onClick={handleDelete}
-            disabled={busy}
+            disabled={busy || isSending}
           >
             <Trash2 className="h-4 w-4" />
             Delete
@@ -222,6 +269,51 @@ export function CampaignDetail({
       {message ? (
         <Alert variant={message.kind === "error" ? "error" : "success"}>{message.text}</Alert>
       ) : null}
+      {testState.error ? <Alert variant="error">{testState.error}</Alert> : null}
+      {testState.success ? <Alert variant="success">{testState.success}</Alert> : null}
+      {pauseMessage ? <Alert variant="warning">{pauseMessage}</Alert> : null}
+      {campaign.pause_reason === "auth_required" ? (
+        <Alert variant="warning">
+          <Link href="/settings/email-accounts" className="font-medium underline">
+            Reconnect Gmail
+          </Link>{" "}
+          then resume this campaign.
+        </Alert>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Send test email</CardTitle>
+          <CardDescription>
+            Sends through your connected Gmail account to a destination you choose.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            action={testAction}
+            className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+          >
+            <input type="hidden" name="campaignId" value={campaign.id} />
+            <div className="space-y-2">
+              <Label htmlFor="test-to">Recipient</Label>
+              <Input
+                id="test-to"
+                name="to"
+                type="email"
+                placeholder="test@example.com"
+                required
+              />
+              {testState.fieldErrors?.to?.[0] ? (
+                <p className="text-xs text-rose-600">{testState.fieldErrors.to[0]}</p>
+              ) : null}
+            </div>
+            <Button type="submit" variant="secondary" disabled={testPending || busy}>
+              <Send className="h-4 w-4" />
+              {testPending ? "Sending..." : "Send Test Email"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       {!isDraft ? (
         <Card>
@@ -229,10 +321,12 @@ export function CampaignDetail({
             <CardTitle>Delivery progress</CardTitle>
             <CardDescription>
               {isSending
-                ? "Emails are being sent gradually in small batches. The background worker continues after you close this page when deployed."
+                ? "Emails are being sent gradually as individual Gmail messages. The background worker continues after you close this page when deployed."
                 : isPaused
-                  ? "Sending is paused. Resume to continue processing the queue."
-                  : "Final delivery outcome for this campaign."}
+                  ? pauseMessage
+                  : campaign.status === "cancelled"
+                    ? "This campaign was cancelled."
+                    : "Final delivery outcome for this campaign. Sent means Gmail accepted the message — not necessarily delivered to the inbox."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -268,12 +362,13 @@ export function CampaignDetail({
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Remaining</p>
+                <p className="text-xs text-slate-500">Pending</p>
                 <p className="text-lg font-semibold text-indigo-600">
                   {formatNumber(stats.pending)}
                 </p>
               </div>
             </div>
+            <p className="text-sm text-slate-500">Progress {progress}%</p>
           </CardContent>
         </Card>
       ) : null}
@@ -288,7 +383,8 @@ export function CampaignDetail({
           <CardHeader>
             <CardTitle>Engagement</CardTitle>
             <CardDescription>
-              Unique recipients reported by your email provider.
+              Provider-reported events when available. Gmail API acceptance alone does
+              not create delivered/open/click events.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -333,7 +429,7 @@ export function CampaignDetail({
           <CardHeader>
             <CardTitle>Delivery issues</CardTitle>
             <CardDescription>
-              The most recent failures reported by your email provider.
+              The most recent failures while sending this campaign.
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -31,6 +31,16 @@ export const campaignSchema = z.object({
     .max(100_000, "Plain-text version is too large")
     .optional()
     .or(z.literal("")),
+  emailAccountId: z.string().uuid("Select a connected sending account"),
+});
+
+export const campaignTestEmailSchema = z.object({
+  campaignId: z.string().uuid(),
+  to: z
+    .string()
+    .trim()
+    .email("Enter a valid email address")
+    .max(320, "Email is too long"),
 });
 
 /** Subject falls back to the campaign name when left blank. */

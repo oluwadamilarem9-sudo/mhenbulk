@@ -3,29 +3,15 @@
  * Campaign/queue code depends on this interface, not a vendor SDK.
  */
 
-export type SendEmailInput = {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-  from?: string;
-  headers?: Record<string, string>;
-  tags?: Record<string, string>;
-};
+export type {
+  ConnectedAccountIdentity,
+  EmailProvider,
+  SendEmailErrorCode,
+  SendEmailInput,
+  SendEmailResult,
+} from "@/lib/email/types";
 
-export type SendEmailResult = {
-  success: boolean;
-  provider: string;
-  messageId?: string;
-  /** True when the failure is temporary and worth retrying (rate limit, 5xx). */
-  retryable?: boolean;
-  error?: string;
-};
-
-export interface EmailProvider {
-  readonly name: string;
-  send(input: SendEmailInput): Promise<SendEmailResult>;
-}
+import type { EmailProvider, SendEmailInput, SendEmailResult } from "@/lib/email/types";
 
 export class ConsoleEmailProvider implements EmailProvider {
   readonly name = "console";
@@ -56,6 +42,11 @@ export class ResendEmailProvider implements EmailProvider {
 
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     try {
+      const from =
+        input.fromName && input.from
+          ? `${input.fromName} <${input.from}>`
+          : input.from || this.defaultFrom;
+
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -63,12 +54,13 @@ export class ResendEmailProvider implements EmailProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: input.from || this.defaultFrom,
+          from,
           to: [input.to],
           subject: input.subject,
           html: input.html,
           text: input.text,
           headers: input.headers,
+          reply_to: input.replyTo,
         }),
       });
 
@@ -78,6 +70,8 @@ export class ResendEmailProvider implements EmailProvider {
           success: false,
           provider: this.name,
           retryable: response.status === 429 || response.status >= 500,
+          errorCode:
+            response.status === 429 ? "rate_limited" : "provider_error",
           error: `Resend ${response.status}: ${body.slice(0, 300)}`,
         };
       }
@@ -94,16 +88,27 @@ export class ResendEmailProvider implements EmailProvider {
         success: false,
         provider: this.name,
         retryable: true,
+        errorCode: "network_error",
         error: error instanceof Error ? error.message : "Network error",
       };
     }
   }
 }
 
+/**
+ * Legacy global provider for local/dev fallback only.
+ * Campaign sending should prefer resolveEmailProviderForAccount().
+ */
 export function getEmailProvider(): EmailProvider {
   const provider = process.env.EMAIL_PROVIDER ?? "console";
 
-  if (provider === "resend" && process.env.RESEND_API_KEY) {
+  if (provider === "resend") {
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error(
+        "EMAIL_PROVIDER=resend requires RESEND_API_KEY. Refusing silent console fallback.",
+      );
+    }
+
     return new ResendEmailProvider(
       process.env.RESEND_API_KEY,
       process.env.EMAIL_FROM || "onboarding@resend.dev",
