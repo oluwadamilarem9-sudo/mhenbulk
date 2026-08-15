@@ -30,8 +30,9 @@ Production-quality bulk email campaign platform built with **Next.js (App Router
 - Recipients are queued in `campaign_recipients`, never blasted at once
 - Small batches (5 per pass, spaced ~400ms) are processed by shared queue code
 - Secured background endpoint at `/api/cron/process-email-queue`
-- Vercel Cron configuration runs the worker every five minutes after deployment
-- The campaign page also processes batches during local development
+- Vercel Cron runs the worker once daily on Hobby (more frequent schedules need Pro)
+- For more frequent background sending on Hobby, call the worker from any free external cron service
+- The campaign page also processes batches during local development and while the page is open
 - Temporary failures retried with exponential backoff (up to 3 attempts)
 - Pause/resume at any time; statuses and sent/failed timestamps stored per recipient
 - Suppressed/unsubscribed contacts re-checked at send time and skipped
@@ -129,7 +130,7 @@ npm run typecheck  # TypeScript check
 ## How sending works
 
 1. Start a campaign → eligible (subscribed, non-suppressed) recipients are inserted into `campaign_recipients` with status `queued`.
-2. The deployed cron invokes the protected worker every five minutes. During local development, the open campaign page invokes the same shared processor.
+2. On Hobby, Vercel Cron runs the worker once per day. During local development (and while a campaign page is open), the same shared processor also runs. For more frequent background sending without Pro, use a free external cron to call the endpoint with your `CRON_SECRET`.
 3. Temporary provider failures (429/5xx/network) are re-queued with exponential backoff; permanent failures are marked `failed` with a timestamp.
 4. Pausing the campaign stops processing immediately; resuming picks up where it left off.
 5. When the queue drains, the campaign is marked `completed`.
