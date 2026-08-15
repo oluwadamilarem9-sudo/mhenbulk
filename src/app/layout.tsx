@@ -14,12 +14,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  ),
   title: {
     default: "Mhenbulk",
     template: "%s · Mhenbulk",
   },
   description:
     "Production-ready bulk email campaign platform built with Next.js and Supabase.",
+  icons: {
+    icon: "/mhenbulk-icon-square.png",
+    apple: "/mhenbulk-icon-square.png",
+  },
+  openGraph: {
+    title: "Mhenbulk",
+    description: "Send more. Reach more.",
+    images: ["/mhenbulk-logo.png"],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

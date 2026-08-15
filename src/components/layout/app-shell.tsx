@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
@@ -25,12 +26,17 @@ export function AppShell({ children, userEmail, userName }: AppShellProps) {
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
           <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-5">
             <Link href="/dashboard" className="inline-flex items-center gap-2">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-sm font-bold text-white">
-                MB
-              </span>
+              <Image
+                src="/mhenbulk-icon.png"
+                alt="Mhenbulk"
+                width={58}
+                height={31}
+                priority
+                className="h-9 w-auto"
+              />
               <div>
                 <p className="text-sm font-semibold text-slate-900">Mhenbulk</p>
-                <p className="text-xs text-slate-500">Email campaigns</p>
+                <p className="text-xs text-slate-500">Send more. Reach more.</p>
               </div>
             </Link>
           </div>
@@ -53,9 +59,14 @@ export function AppShell({ children, userEmail, userName }: AppShellProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
             <Link href="/dashboard" className="inline-flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-xs font-bold text-white">
-                MB
-              </span>
+              <Image
+                src="/mhenbulk-icon.png"
+                alt="Mhenbulk"
+                width={52}
+                height={28}
+                priority
+                className="h-8 w-auto"
+              />
               <span className="text-sm font-semibold text-slate-900">Mhenbulk</span>
             </Link>
             <Button

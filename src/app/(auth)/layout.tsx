@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
@@ -8,11 +9,18 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.35),_transparent_55%)]" />
           <div className="relative z-10 flex h-full flex-col justify-between gap-10">
             <div>
-              <Link href="/" className="inline-flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500 text-sm font-bold">
-                  MB
-                </span>
-                <span className="text-lg font-semibold tracking-tight">Mhenbulk</span>
+              <Link
+                href="/"
+                className="inline-flex rounded-2xl bg-white p-3 shadow-xl shadow-black/20"
+              >
+                <Image
+                  src="/mhenbulk-logo.png"
+                  alt="Mhenbulk — Send more. Reach more."
+                  width={190}
+                  height={135}
+                  priority
+                  className="h-auto w-40 sm:w-48"
+                />
               </Link>
               <h1 className="mt-10 text-3xl font-semibold tracking-tight sm:text-4xl">
                 Send campaigns with confidence.
