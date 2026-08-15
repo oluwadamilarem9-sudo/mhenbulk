@@ -39,6 +39,21 @@ function readPublicEnv() {
   };
 }
 
+/** Deployment dashboards often store values wrapped in quotes. */
+function unquote(value: string | undefined): string | undefined {
+  return value?.trim().replace(/^["']|["']$/g, "");
+}
+
+/**
+ * EMAIL_PROVIDER is a legacy local/dev fallback. An unrecognized value must
+ * never break Gmail-connected sending, so unknown values degrade to console.
+ */
+function readEmailProvider(): "console" | "resend" {
+  return unquote(process.env.EMAIL_PROVIDER)?.toLowerCase() === "resend"
+    ? "resend"
+    : "console";
+}
+
 export function getPublicEnv(): PublicEnv {
   const parsed = publicEnvSchema.safeParse(readPublicEnv());
 
@@ -54,9 +69,9 @@ export function getServerEnv(): ServerEnv {
   const parsed = serverEnvSchema.safeParse({
     ...readPublicEnv(),
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER ?? "console",
+    EMAIL_PROVIDER: readEmailProvider(),
     RESEND_API_KEY: process.env.RESEND_API_KEY,
-    EMAIL_FROM: process.env.EMAIL_FROM,
+    EMAIL_FROM: unquote(process.env.EMAIL_FROM),
     UNSUBSCRIBE_SECRET: process.env.UNSUBSCRIBE_SECRET,
     CRON_SECRET: process.env.CRON_SECRET,
     RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
@@ -64,9 +79,9 @@ export function getServerEnv(): ServerEnv {
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
     EMAIL_ACCOUNT_ENCRYPTION_KEY: process.env.EMAIL_ACCOUNT_ENCRYPTION_KEY,
-    EMAIL_QUEUE_BATCH_SIZE: process.env.EMAIL_QUEUE_BATCH_SIZE ?? "5",
-    EMAIL_SEND_DELAY_MS: process.env.EMAIL_SEND_DELAY_MS ?? "800",
-    MAX_RETRIES: process.env.MAX_RETRIES ?? "3",
+    EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "5",
+    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "800",
+    MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
   });
 
   if (!parsed.success) {

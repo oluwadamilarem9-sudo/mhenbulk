@@ -191,8 +191,15 @@ export async function GET(request: Request) {
     return response;
   } catch (error) {
     console.error("[google-oauth] callback failed", error);
+    const isConfigError =
+      error instanceof Error &&
+      /environment configuration|is not configured/i.test(error.message);
     const response = NextResponse.redirect(
-      appUrl("/settings/email-accounts?error=oauth_failed"),
+      appUrl(
+        isConfigError
+          ? "/settings/email-accounts?error=server_misconfigured"
+          : "/settings/email-accounts?error=oauth_failed",
+      ),
     );
     clearOAuthCookies(response, secure);
     return response;

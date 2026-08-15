@@ -12,7 +12,8 @@ export type CampaignStatus =
   | "sending"
   | "paused"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "failed";
 
 export type RecipientStatus =
   | "pending"
@@ -21,7 +22,32 @@ export type RecipientStatus =
   | "sent"
   | "failed"
   | "skipped"
-  | "bounced";
+  | "bounced"
+  | "replied"
+  | "unsubscribed"
+  | "completed";
+
+export type ContactStatus = "active" | "unsubscribed" | "bounced" | "invalid";
+
+export type CampaignStepType =
+  | "initial"
+  | "manual_followup"
+  | "automated_followup";
+
+export type CampaignStepSendMode = "immediate" | "scheduled" | "automated";
+
+export type CampaignStepStatus =
+  | "draft"
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "cancelled";
+
+export type CampaignStepAudienceMode =
+  | "all_eligible"
+  | "not_replied"
+  | "custom";
 
 export type EmailEventType =
   | "queued"
@@ -82,6 +108,10 @@ export type Database = {
           last_name: string;
           email: string;
           email_normalized: string;
+          company: string | null;
+          phone: string | null;
+          notes: string | null;
+          status: ContactStatus;
           is_unsubscribed: boolean;
           is_suppressed: boolean;
           created_at: string;
@@ -94,6 +124,10 @@ export type Database = {
           last_name: string;
           email: string;
           email_normalized?: string;
+          company?: string | null;
+          phone?: string | null;
+          notes?: string | null;
+          status?: ContactStatus;
           is_unsubscribed?: boolean;
           is_suppressed?: boolean;
           created_at?: string;
@@ -106,6 +140,10 @@ export type Database = {
           last_name?: string;
           email?: string;
           email_normalized?: string;
+          company?: string | null;
+          phone?: string | null;
+          notes?: string | null;
+          status?: ContactStatus;
           is_unsubscribed?: boolean;
           is_suppressed?: boolean;
           created_at?: string;
@@ -189,7 +227,15 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "email_account_credentials_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: true;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       campaigns: {
         Row: {
@@ -204,6 +250,8 @@ export type Database = {
           from_email: string | null;
           from_name: string | null;
           pause_reason: string | null;
+          automation_enabled: boolean;
+          timezone: string;
           scheduled_at: string | null;
           started_at: string | null;
           paused_at: string | null;
@@ -223,6 +271,8 @@ export type Database = {
           from_email?: string | null;
           from_name?: string | null;
           pause_reason?: string | null;
+          automation_enabled?: boolean;
+          timezone?: string;
           scheduled_at?: string | null;
           started_at?: string | null;
           paused_at?: string | null;
@@ -242,6 +292,8 @@ export type Database = {
           from_email?: string | null;
           from_name?: string | null;
           pause_reason?: string | null;
+          automation_enabled?: boolean;
+          timezone?: string;
           scheduled_at?: string | null;
           started_at?: string | null;
           paused_at?: string | null;
@@ -249,15 +301,26 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       campaign_recipients: {
         Row: {
           id: string;
           campaign_id: string;
+          campaign_step_id: string;
           contact_id: string;
           user_id: string;
           email: string;
+          to_email: string;
+          to_name: string | null;
           status: RecipientStatus;
           attempt_count: number;
           max_attempts: number;
@@ -266,18 +329,28 @@ export type Database = {
           queued_at: string | null;
           sent_at: string | null;
           failed_at: string | null;
+          replied_at: string | null;
+          reply_source: string | null;
+          sequence_stopped_at: string | null;
+          sequence_stop_reason: string | null;
           provider_message_id: string | null;
+          provider_thread_id: string | null;
           claimed_at: string | null;
           claim_expires_at: string | null;
+          claim_token: string | null;
+          delivery_unknown_at: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           campaign_id: string;
+          campaign_step_id: string;
           contact_id: string;
           user_id: string;
           email: string;
+          to_email: string;
+          to_name?: string | null;
           status?: RecipientStatus;
           attempt_count?: number;
           max_attempts?: number;
@@ -286,18 +359,28 @@ export type Database = {
           queued_at?: string | null;
           sent_at?: string | null;
           failed_at?: string | null;
+          replied_at?: string | null;
+          reply_source?: string | null;
+          sequence_stopped_at?: string | null;
+          sequence_stop_reason?: string | null;
           provider_message_id?: string | null;
+          provider_thread_id?: string | null;
           claimed_at?: string | null;
           claim_expires_at?: string | null;
+          claim_token?: string | null;
+          delivery_unknown_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           id?: string;
           campaign_id?: string;
+          campaign_step_id?: string;
           contact_id?: string;
           user_id?: string;
           email?: string;
+          to_email?: string;
+          to_name?: string | null;
           status?: RecipientStatus;
           attempt_count?: number;
           max_attempts?: number;
@@ -306,19 +389,337 @@ export type Database = {
           queued_at?: string | null;
           sent_at?: string | null;
           failed_at?: string | null;
+          replied_at?: string | null;
+          reply_source?: string | null;
+          sequence_stopped_at?: string | null;
+          sequence_stop_reason?: string | null;
           provider_message_id?: string | null;
+          provider_thread_id?: string | null;
           claimed_at?: string | null;
           claim_expires_at?: string | null;
+          claim_token?: string | null;
+          delivery_unknown_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_recipients_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_recipients_campaign_step_id_fkey";
+            columns: ["campaign_step_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_steps";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_recipients_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tags: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          name_normalized: string;
+          color: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          name: string;
+          name_normalized?: string;
+          color?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          name?: string;
+          name_normalized?: string;
+          color?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Relationships: [];
+      };
+      contact_tags: {
+        Row: {
+          id: string;
+          user_id: string;
+          contact_id: string;
+          tag_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          contact_id: string;
+          tag_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          contact_id?: string;
+          tag_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "contact_tags_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "contact_tags_tag_id_fkey";
+            columns: ["tag_id"];
+            isOneToOne: false;
+            referencedRelation: "tags";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_contacts: {
+        Row: {
+          id: string;
+          user_id: string;
+          campaign_id: string;
+          contact_id: string;
+          added_at: string;
+          removed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          campaign_id: string;
+          contact_id: string;
+          added_at?: string;
+          removed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          campaign_id?: string;
+          contact_id?: string;
+          added_at?: string;
+          removed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_contacts_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_contacts_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_steps: {
+        Row: {
+          id: string;
+          user_id: string;
+          campaign_id: string;
+          step_number: number;
+          step_type: CampaignStepType;
+          subject: string | null;
+          html_content: string;
+          text_content: string | null;
+          delay_minutes: number;
+          send_mode: CampaignStepSendMode;
+          status: CampaignStepStatus;
+          scheduled_at: string | null;
+          timezone: string;
+          stop_on_reply: boolean;
+          stop_on_unsubscribe: boolean;
+          stop_on_bounce: boolean;
+          audience_mode: CampaignStepAudienceMode;
+          target_contact_ids: string[];
+          email_account_id: string | null;
+          sent_at: string | null;
+          failed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          campaign_id: string;
+          step_number: number;
+          step_type: CampaignStepType;
+          subject?: string | null;
+          html_content?: string;
+          text_content?: string | null;
+          delay_minutes?: number;
+          send_mode?: CampaignStepSendMode;
+          status?: CampaignStepStatus;
+          scheduled_at?: string | null;
+          timezone?: string;
+          stop_on_reply?: boolean;
+          stop_on_unsubscribe?: boolean;
+          stop_on_bounce?: boolean;
+          audience_mode?: CampaignStepAudienceMode;
+          target_contact_ids?: string[];
+          email_account_id?: string | null;
+          sent_at?: string | null;
+          failed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          campaign_id?: string;
+          step_number?: number;
+          step_type?: CampaignStepType;
+          subject?: string | null;
+          html_content?: string;
+          text_content?: string | null;
+          delay_minutes?: number;
+          send_mode?: CampaignStepSendMode;
+          status?: CampaignStepStatus;
+          scheduled_at?: string | null;
+          timezone?: string;
+          stop_on_reply?: boolean;
+          stop_on_unsubscribe?: boolean;
+          stop_on_bounce?: boolean;
+          audience_mode?: CampaignStepAudienceMode;
+          target_contact_ids?: string[];
+          email_account_id?: string | null;
+          sent_at?: string | null;
+          failed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_steps_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_steps_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_activity: {
+        Row: {
+          id: string;
+          user_id: string;
+          campaign_id: string | null;
+          campaign_step_id: string | null;
+          campaign_contact_id: string | null;
+          campaign_recipient_id: string | null;
+          contact_id: string | null;
+          event_type: string;
+          metadata: Json;
+          occurred_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          campaign_id?: string | null;
+          campaign_step_id?: string | null;
+          campaign_contact_id?: string | null;
+          campaign_recipient_id?: string | null;
+          contact_id?: string | null;
+          event_type: string;
+          metadata?: Json;
+          occurred_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          campaign_id?: string | null;
+          campaign_step_id?: string | null;
+          campaign_contact_id?: string | null;
+          campaign_recipient_id?: string | null;
+          contact_id?: string | null;
+          event_type?: string;
+          metadata?: Json;
+          occurred_at?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_activity_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_activity_campaign_step_id_fkey";
+            columns: ["campaign_step_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_steps";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_activity_campaign_contact_id_fkey";
+            columns: ["campaign_contact_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_contacts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_activity_campaign_recipient_id_fkey";
+            columns: ["campaign_recipient_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_recipients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_activity_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       email_events: {
         Row: {
           id: string;
           user_id: string;
           campaign_id: string | null;
+          campaign_step_id: string | null;
           campaign_recipient_id: string | null;
           contact_id: string | null;
           event_type: EmailEventType;
@@ -331,6 +732,7 @@ export type Database = {
           id?: string;
           user_id: string;
           campaign_id?: string | null;
+          campaign_step_id?: string | null;
           campaign_recipient_id?: string | null;
           contact_id?: string | null;
           event_type: EmailEventType;
@@ -343,6 +745,7 @@ export type Database = {
           id?: string;
           user_id?: string;
           campaign_id?: string | null;
+          campaign_step_id?: string | null;
           campaign_recipient_id?: string | null;
           contact_id?: string | null;
           event_type?: EmailEventType;
@@ -351,7 +754,36 @@ export type Database = {
           metadata?: Json;
           created_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "email_events_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_events_campaign_step_id_fkey";
+            columns: ["campaign_step_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_steps";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_events_campaign_recipient_id_fkey";
+            columns: ["campaign_recipient_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_recipients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_events_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       suppression_list: {
         Row: {
@@ -384,7 +816,15 @@ export type Database = {
           contact_id?: string | null;
           created_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "suppression_list_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
     };
     Views: Record<string, never>;
@@ -395,6 +835,11 @@ export type Database = {
       email_event_type: EmailEventType;
       email_account_provider: EmailAccountProvider;
       email_account_status: EmailAccountStatus;
+      contact_status: ContactStatus;
+      campaign_step_type: CampaignStepType;
+      campaign_step_send_mode: CampaignStepSendMode;
+      campaign_step_status: CampaignStepStatus;
+      campaign_step_audience_mode: CampaignStepAudienceMode;
     };
     CompositeTypes: Record<string, never>;
   };

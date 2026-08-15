@@ -54,32 +54,76 @@ export function parseDelimited(text: string, delimiter = ","): string[][] {
   return rows;
 }
 
-const HEADER_ALIASES: Record<string, "first_name" | "last_name" | "email"> = {
+type ContactFileField =
+  | "first_name"
+  | "last_name"
+  | "email"
+  | "company"
+  | "phone"
+  | "tags"
+  | "notes";
+
+const HEADER_ALIASES: Record<string, ContactFileField> = {
   first_name: "first_name",
   firstname: "first_name",
   "first name": "first_name",
+  given_name: "first_name",
+  "given name": "first_name",
   last_name: "last_name",
   lastname: "last_name",
   "last name": "last_name",
+  surname: "last_name",
+  family_name: "last_name",
+  "family name": "last_name",
   email: "email",
   "email address": "email",
   email_address: "email",
+  company: "company",
+  organization: "company",
+  organisation: "company",
+  phone: "phone",
+  telephone: "phone",
+  "phone number": "phone",
+  tags: "tags",
+  tag: "tags",
+  labels: "tags",
+  notes: "notes",
+  note: "notes",
+};
+
+export type ParsedContactRow = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  company: string;
+  phone: string;
+  tags: string;
+  notes: string;
+  line: number;
 };
 
 export type ParsedContactsFile = {
-  rows: Array<{ first_name: string; last_name: string; email: string; line: number }>;
+  rows: ParsedContactRow[];
   error?: string;
 };
+
+function emptyRow(line: number): ParsedContactRow {
+  return {
+    first_name: "",
+    last_name: "",
+    email: "",
+    company: "",
+    phone: "",
+    tags: "",
+    notes: "",
+    line,
+  };
+}
 
 function parsePlainEmailList(text: string): ParsedContactsFile {
   const rows = text
     .split(/\r?\n/)
-    .map((value, index) => ({
-      first_name: "",
-      last_name: "",
-      email: value.trim(),
-      line: index + 1,
-    }))
+    .map((value, index) => ({ ...emptyRow(index + 1), email: value.trim() }))
     .filter((row) => row.email !== "" && row.email.toLowerCase() !== "email");
 
   return rows.length > 0
@@ -108,7 +152,7 @@ export function parseContactsFile(text: string, fileName: string): ParsedContact
   }
 
   const header = parsed[0].map((column) => column.trim().toLowerCase());
-  const columnMap = new Map<number, "first_name" | "last_name" | "email">();
+  const columnMap = new Map<number, ContactFileField>();
 
   header.forEach((column, index) => {
     const mapped = HEADER_ALIASES[column];
@@ -124,10 +168,8 @@ export function parseContactsFile(text: string, fileName: string): ParsedContact
     if (parsed.every((row) => row.length === 1)) {
       return {
         rows: parsed.map((row, index) => ({
-          first_name: "",
-          last_name: "",
+          ...emptyRow(index + 1),
           email: row[0].trim(),
-          line: index + 1,
         })),
       };
     }
@@ -135,14 +177,14 @@ export function parseContactsFile(text: string, fileName: string): ParsedContact
     return {
       rows: [],
       error:
-        "The file must include an 'email' column. The first_name and last_name columns are optional.",
+        "The file must include an 'email' column. Name, company, phone, tags, and notes columns are optional.",
     };
   }
 
   const rows: ParsedContactsFile["rows"] = [];
 
   for (let i = 1; i < parsed.length; i++) {
-    const record = { first_name: "", last_name: "", email: "", line: i + 1 };
+    const record = emptyRow(i + 1);
 
     parsed[i].forEach((value, index) => {
       const field = columnMap.get(index);

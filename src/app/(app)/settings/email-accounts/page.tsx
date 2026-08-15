@@ -40,6 +40,8 @@ function flashFromParams(params: Record<string, string | string[] | undefined>) 
     encryption_not_configured:
       "EMAIL_ACCOUNT_ENCRYPTION_KEY is not configured on the server.",
     oauth_failed: "Unable to complete Google authorization. Please try again.",
+    server_misconfigured:
+      "Server configuration is invalid. Check the deployment environment variables and try again.",
   };
 
   return {

@@ -23,9 +23,19 @@ const initialState: CampaignActionState = {};
 type CampaignFormProps = {
   campaign?: CampaignRow;
   emailAccounts: EmailAccountPublic[];
+  availableContacts?: Array<{
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+  }>;
 };
 
-export function CampaignForm({ campaign, emailAccounts }: CampaignFormProps) {
+export function CampaignForm({
+  campaign,
+  emailAccounts,
+  availableContacts = [],
+}: CampaignFormProps) {
   const router = useRouter();
   const action = campaign ? updateCampaignAction : createCampaignAction;
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -64,16 +74,20 @@ export function CampaignForm({ campaign, emailAccounts }: CampaignFormProps) {
 
         <div className="space-y-2">
           <Label htmlFor="subject">
-            Email subject <span className="font-normal text-slate-400">(optional)</span>
+            Email subject{" "}
+            <span className="font-normal text-slate-400">(optional)</span>
           </Label>
           <Input
             id="subject"
             name="subject"
-            defaultValue={campaign?.subject}
+            defaultValue={
+              campaign?.subject?.replaceAll("\u200B", "").trim() || ""
+            }
             placeholder="Hi {{first_name}}, here's what's new"
           />
           <p className="text-xs text-slate-500">
-            What people see in their inbox. If left blank, the campaign name is used.
+            What people see in their inbox. Leave blank for no subject — the
+            campaign name is never used here.
           </p>
           {state.fieldErrors?.subject?.[0] ? (
             <p className="text-xs text-rose-600">{state.fieldErrors.subject[0]}</p>
@@ -93,7 +107,7 @@ export function CampaignForm({ campaign, emailAccounts }: CampaignFormProps) {
         ) : null}
         <p className="text-xs text-slate-500">
           Format your message with the toolbar and insert personalization with one
-          click. An unsubscribe link is added automatically.
+          click. Recipients see exactly this — nothing is appended to the body.
         </p>
       </div>
 
@@ -116,6 +130,42 @@ export function CampaignForm({ campaign, emailAccounts }: CampaignFormProps) {
           cannot show HTML. Most people can leave it empty.
         </p>
       </div>
+
+      {!campaign ? (
+        <fieldset className="space-y-2">
+          <legend className="font-medium text-slate-900">
+            Initial recipients <span className="font-normal text-slate-400">(optional)</span>
+          </legend>
+          <p className="text-xs text-slate-500">
+            Choose existing eligible contacts now, or add/import recipients after
+            creating the campaign.
+          </p>
+          <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+            {availableContacts.length ? (
+              availableContacts.map((contact) => (
+                <label
+                  key={contact.id}
+                  className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                >
+                  <input type="checkbox" name="contactIds" value={contact.id} />
+                  <span className="min-w-0">
+                    <span className="block font-medium text-slate-900">
+                      {contact.first_name} {contact.last_name}
+                    </span>
+                    <span className="block truncate text-slate-500">
+                      {contact.email}
+                    </span>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <p className="p-4 text-sm text-slate-500">
+                No eligible contacts yet. You can add or import them in the next step.
+              </p>
+            )}
+          </div>
+        </fieldset>
+      ) : null}
 
       <div className="flex justify-end gap-2">
         <Button

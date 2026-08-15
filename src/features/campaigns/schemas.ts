@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+/**
+ * Postgres still has campaigns_subject_check (non-empty). Until migration
+ * 0003 is applied, blank subjects are stored as a zero-width space so the
+ * row saves; MIME send strips it so recipients see "no subject".
+ */
+export const BLANK_SUBJECT_PLACEHOLDER = "\u200B";
+
+export function subjectForStorage(subject?: string | null): string {
+  const trimmed = subject?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : BLANK_SUBJECT_PLACEHOLDER;
+}
+
+export function subjectForSend(subject?: string | null): string {
+  return (subject ?? "").replaceAll(BLANK_SUBJECT_PLACEHOLDER, "").trim();
+}
+
+export function subjectForDisplay(subject?: string | null): string {
+  const visible = subjectForSend(subject);
+  return visible.length > 0 ? visible : "(no subject)";
+}
+
 export const campaignSchema = z.object({
   name: z
     .string()
@@ -42,12 +63,6 @@ export const campaignTestEmailSchema = z.object({
     .email("Enter a valid email address")
     .max(320, "Email is too long"),
 });
-
-/** Subject falls back to the campaign name when left blank. */
-export function resolveCampaignSubject(name: string, subject?: string | null): string {
-  const trimmed = subject?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : name;
-}
 
 export type CampaignInput = z.infer<typeof campaignSchema>;
 

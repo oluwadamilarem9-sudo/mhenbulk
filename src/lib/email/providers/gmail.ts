@@ -22,6 +22,10 @@ function formatFromHeader(email: string, displayName?: string | null): string {
   return `"${safeName}" <${email}>`;
 }
 
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n\0]+/g, " ").trim();
+}
+
 function buildMimeMessage(input: SendEmailInput & { fromEmail: string }): string {
   const boundary = `mhenbulk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const from = formatFromHeader(input.fromEmail, input.fromName ?? input.from);
@@ -34,20 +38,23 @@ function buildMimeMessage(input: SendEmailInput & { fromEmail: string }): string
 
   const headers: string[] = [
     `From: ${from}`,
-    `To: ${input.to}`,
-    `Subject: ${input.subject}`,
+    `To: ${sanitizeHeaderValue(input.to)}`,
+    `Subject: ${sanitizeHeaderValue(input.subject)}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
 
   if (input.replyTo) {
-    headers.push(`Reply-To: ${input.replyTo}`);
+    headers.push(`Reply-To: ${sanitizeHeaderValue(input.replyTo)}`);
   }
 
   if (input.headers) {
     for (const [key, value] of Object.entries(input.headers)) {
-      if (!/^(from|to|subject|mime-version|content-type)$/i.test(key)) {
-        headers.push(`${key}: ${value}`);
+      if (
+        /^[A-Za-z0-9-]+$/.test(key) &&
+        !/^(from|to|subject|mime-version|content-type)$/i.test(key)
+      ) {
+        headers.push(`${key}: ${sanitizeHeaderValue(value)}`);
       }
     }
   }
@@ -113,22 +120,44 @@ export class GmailProvider implements EmailProvider {
             Authorization: `Bearer ${this.accessToken}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ raw: encodeBase64Url(raw) }),
+          body: JSON.stringify({
+            raw: encodeBase64Url(raw),
+            ...(input.threadId ? { threadId: input.threadId } : {}),
+          }),
         },
       );
 
       if (response.ok) {
-        const data = (await response.json()) as { id?: string };
+        const data = (await response.json()) as { id?: string; threadId?: string };
         return {
           success: true,
           provider: this.name,
           messageId: data.id,
+          threadId: data.threadId,
         };
       }
 
       const body = await response.text();
       const retryAfterMs = parseRetryAfterMs(response);
       const lower = body.toLowerCase();
+
+      console.error("[gmail] send failed", response.status, body.slice(0, 600));
+
+      // Google reports a disabled API as 403 PERMISSION_DENIED, which must not
+      // be mistaken for an expired user token.
+      if (
+        lower.includes("service_disabled") ||
+        lower.includes("accessnotconfigured") ||
+        lower.includes("has not been used in project")
+      ) {
+        return {
+          success: false,
+          provider: this.name,
+          retryable: false,
+          errorCode: "provider_disabled",
+          error: `Gmail API is not enabled for this Google Cloud project: ${body.slice(0, 300)}`,
+        };
+      }
 
       if (response.status === 401 || response.status === 403) {
         const authRelated =
@@ -188,9 +217,12 @@ export class GmailProvider implements EmailProvider {
       return {
         success: false,
         provider: this.name,
-        retryable: true,
-        errorCode: "network_error",
-        error: error instanceof Error ? error.message : "Network error",
+        retryable: false,
+        errorCode: "delivery_unknown",
+        error:
+          error instanceof Error
+            ? `Gmail request outcome is unknown: ${error.message}`
+            : "Gmail request outcome is unknown.",
       };
     }
   }

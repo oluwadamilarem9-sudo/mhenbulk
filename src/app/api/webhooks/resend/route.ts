@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   // Find the original send to attribute this event to a user/campaign/contact.
   const { data: sentEvent } = await supabase
     .from("email_events")
-    .select("user_id, campaign_id, campaign_recipient_id, contact_id")
+    .select("user_id, campaign_id, campaign_step_id, campaign_recipient_id, contact_id")
     .eq("provider_message_id", emailId)
     .eq("event_type", "sent")
     .maybeSingle();
@@ -73,6 +73,7 @@ export async function POST(request: Request) {
   await supabase.from("email_events").insert({
     user_id: sentEvent.user_id,
     campaign_id: sentEvent.campaign_id,
+    campaign_step_id: sentEvent.campaign_step_id,
     campaign_recipient_id: sentEvent.campaign_recipient_id,
     contact_id: sentEvent.contact_id,
     event_type: eventType,
@@ -110,7 +111,10 @@ export async function POST(request: Request) {
     if (contact) {
       await supabase
         .from("contacts")
-        .update({ is_suppressed: true })
+        .update({
+          is_suppressed: true,
+          status: eventType === "bounced" ? "bounced" : "invalid",
+        })
         .eq("id", contact.id);
 
       await supabase.from("suppression_list").upsert(
@@ -126,6 +130,47 @@ export async function POST(request: Request) {
         },
         { onConflict: "user_id,email_normalized", ignoreDuplicates: true },
       );
+
+      if (sentEvent.campaign_id) {
+        const { data: automatedSteps } = await supabase
+          .from("campaign_steps")
+          .select("id")
+          .eq("campaign_id", sentEvent.campaign_id)
+          .eq("user_id", contact.user_id)
+          .eq("step_type", "automated_followup")
+          .eq("stop_on_bounce", true);
+
+        const stepIds = (automatedSteps ?? []).map((step) => step.id);
+        if (stepIds.length > 0) {
+          await supabase
+            .from("campaign_recipients")
+            .update({
+              status: "skipped",
+              sequence_stopped_at: new Date().toISOString(),
+              sequence_stop_reason:
+                eventType === "bounced" ? "bounced" : "complained",
+              last_error:
+                eventType === "bounced"
+                  ? "Follow-up stopped after bounce"
+                  : "Follow-up stopped after complaint",
+            })
+            .eq("campaign_id", sentEvent.campaign_id)
+            .eq("contact_id", contact.id)
+            .in("campaign_step_id", stepIds)
+            .in("status", ["pending", "queued"]);
+        }
+
+        await supabase.from("campaign_activity").insert({
+          user_id: contact.user_id,
+          campaign_id: sentEvent.campaign_id,
+          campaign_step_id: sentEvent.campaign_step_id,
+          campaign_recipient_id: sentEvent.campaign_recipient_id,
+          contact_id: contact.id,
+          event_type:
+            eventType === "bounced" ? "recipient_bounced" : "recipient_complained",
+          metadata: { provider: "resend", provider_message_id: emailId },
+        });
+      }
     }
   }
 

@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+export const contactStatuses = [
+  "active",
+  "unsubscribed",
+  "bounced",
+  "invalid",
+] as const;
+
+export type ContactStatus = (typeof contactStatuses)[number];
+
+const optionalText = (maximum: number, message: string) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+    z.string().trim().max(maximum, message).nullable(),
+  );
+
 export const contactSchema = z.object({
   firstName: z
     .string()
@@ -16,6 +31,10 @@ export const contactSchema = z.object({
     .trim()
     .email("Enter a valid email address")
     .max(320, "Email is too long"),
+  company: optionalText(200, "Company is too long"),
+  phone: optionalText(50, "Phone number is too long"),
+  notes: optionalText(5000, "Notes are too long"),
+  status: z.enum(contactStatuses).default("active"),
 });
 
 export type ContactInput = z.infer<typeof contactSchema>;

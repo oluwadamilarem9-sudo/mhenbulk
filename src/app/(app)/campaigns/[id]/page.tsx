@@ -3,15 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { CampaignDetail } from "@/features/campaigns/components/campaign-detail";
-import { CampaignForm } from "@/features/campaigns/components/campaign-form";
-import { getCampaign } from "@/features/campaigns/queries";
+  CAMPAIGN_TABS,
+  CampaignWorkspace,
+  type CampaignTab,
+} from "@/features/campaigns/components/campaign-workspace";
+import { getCampaignWorkspace } from "@/features/campaigns/queries";
+import { subjectForSend } from "@/features/campaigns/schemas";
 import { listEmailAccounts } from "@/features/email-accounts/queries";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { createClient } from "@/lib/supabase/server";
@@ -22,10 +19,16 @@ export const metadata = {
 
 type CampaignPageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
 };
 
-export default async function CampaignPage({ params }: CampaignPageProps) {
+export default async function CampaignPage({ params, searchParams }: CampaignPageProps) {
   const { id } = await params;
+  const query = await searchParams;
+  const requestedTab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
+  const activeTab: CampaignTab = CAMPAIGN_TABS.includes(requestedTab as CampaignTab)
+    ? requestedTab as CampaignTab
+    : "overview";
 
   if (!z.string().uuid().safeParse(id).success) {
     notFound();
@@ -40,25 +43,20 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
     redirect("/login");
   }
 
-  const { campaign, stats, failures, engagement } = await getCampaign(user.id, id);
+  const [workspace, accountResult] = await Promise.all([
+    getCampaignWorkspace(user.id, id),
+    listEmailAccounts(user.id),
+  ]);
 
-  if (!campaign) {
+  if (!workspace) {
     notFound();
   }
 
-  const { accounts } = await listEmailAccounts(user.id);
-
-  const { data: eligibleContacts } = await supabase
-    .from("contacts")
-    .select("id, first_name, last_name, email")
-    .eq("user_id", user.id)
-    .eq("is_unsubscribed", false)
-    .eq("is_suppressed", false)
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const { campaign } = workspace;
+  const { accounts } = accountResult;
 
   const preview = renderCampaignEmail({
-    subject: campaign.subject,
+    subject: subjectForSend(campaign.subject),
     htmlContent: campaign.html_content,
     textContent: campaign.text_content,
     vars: {
@@ -66,7 +64,6 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
       last_name: "Doe",
       email: "jane@example.com",
     },
-    unsubscribeUrl: "#preview",
   });
 
   const senderLabel = campaign.from_email
@@ -83,30 +80,13 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
         </Link>
       </div>
 
-      <CampaignDetail
-        campaign={campaign}
-        stats={stats}
-        eligibleContacts={eligibleContacts ?? []}
+      <CampaignWorkspace
+        data={workspace}
+        activeTab={activeTab}
+        accounts={accounts}
         previewHtml={preview.html}
-        failures={failures}
-        engagement={engagement}
         senderLabel={senderLabel}
       />
-
-      {campaign.status === "draft" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Edit campaign</CardTitle>
-            <CardDescription>
-              Update the name, subject, content, or sending account. Editing is locked
-              once sending starts.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CampaignForm campaign={campaign} emailAccounts={accounts} />
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }

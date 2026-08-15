@@ -4,6 +4,72 @@ import type { Database } from "@/lib/supabase/database.types";
 export type CampaignRow = Database["public"]["Tables"]["campaigns"]["Row"];
 export type RecipientRow = Database["public"]["Tables"]["campaign_recipients"]["Row"];
 
+export type CampaignStep = {
+  id: string;
+  campaign_id: string;
+  step_type: "initial" | "manual_followup" | "automated_followup";
+  step_number: number;
+  subject: string | null;
+  html_content: string;
+  text_content: string | null;
+  delay_minutes: number;
+  send_mode: "immediate" | "scheduled" | "automated";
+  status: "draft" | "scheduled" | "sending" | "sent" | "failed" | "cancelled";
+  scheduled_at: string | null;
+  timezone: string;
+  audience_mode: "all_eligible" | "not_replied" | "custom";
+  email_account_id: string | null;
+  stop_on_reply: boolean;
+  stop_on_unsubscribe: boolean;
+  stop_on_bounce: boolean;
+  target_contact_ids: string[];
+  created_at: string;
+};
+
+export type CampaignMember = {
+  membershipId: string;
+  contactId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  isUnsubscribed: boolean;
+  isSuppressed: boolean;
+  recipientId: string | null;
+  deliveryStatus: string | null;
+  sentAt: string | null;
+  repliedAt: string | null;
+  replySource: string | null;
+  sequenceStoppedAt: string | null;
+  sequenceStopReason: string | null;
+};
+
+export type EligibleCampaignContact = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  enrolled: boolean;
+};
+
+export type CampaignActivityItem = {
+  id: string;
+  eventType: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type CampaignWorkspaceData = {
+  campaign: CampaignRow & { automation_enabled: boolean; timezone: string };
+  stats: CampaignStats;
+  failures: DeliveryFailure[];
+  engagement: EngagementStats;
+  members: CampaignMember[];
+  eligibleContacts: EligibleCampaignContact[];
+  steps: CampaignStep[];
+  activity: CampaignActivityItem[];
+  replies: number;
+};
+
 export type CampaignStats = {
   total: number;
   sent: number;
@@ -149,4 +215,115 @@ export async function countEligibleContacts(userId: string): Promise<number> {
     .eq("is_suppressed", false);
 
   return count ?? 0;
+}
+
+export async function getCampaignWorkspace(
+  userId: string,
+  campaignId: string,
+): Promise<CampaignWorkspaceData | null> {
+  const supabase = await createClient();
+  const base = await getCampaign(userId, campaignId);
+  if (!base.campaign) return null;
+
+  const [
+    { data: membershipRows },
+    { data: contacts },
+    { data: steps },
+    { data: activity },
+    { data: recipientRows },
+  ] = await Promise.all([
+    supabase
+      .from("campaign_contacts")
+      .select("id, contact_id, contacts!inner(id, first_name, last_name, email, is_unsubscribed, is_suppressed)")
+      .eq("campaign_id", campaignId)
+      .eq("user_id", userId)
+      .is("removed_at", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("contacts")
+      .select("id, first_name, last_name, email")
+      .eq("user_id", userId)
+      .eq("is_unsubscribed", false)
+      .eq("is_suppressed", false)
+      .order("created_at", { ascending: false })
+      .limit(5000),
+    supabase
+      .from("campaign_steps")
+      .select("*")
+      .eq("campaign_id", campaignId)
+      .eq("user_id", userId)
+      .order("step_number", { ascending: true }),
+    supabase
+      .from("campaign_activity")
+      .select("id, event_type, metadata, created_at")
+      .eq("campaign_id", campaignId)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    supabase
+      .from("campaign_recipients")
+      .select(
+        "id, contact_id, status, sent_at, replied_at, reply_source, sequence_stopped_at, sequence_stop_reason, campaign_step_id, created_at",
+      )
+      .eq("campaign_id", campaignId)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const recipientsByContact = new Map<string, NonNullable<typeof recipientRows>[number]>();
+  for (const recipient of recipientRows ?? []) {
+    const current = recipientsByContact.get(recipient.contact_id);
+    if (!current || (!current.sent_at && recipient.sent_at)) {
+      recipientsByContact.set(recipient.contact_id, recipient);
+    }
+  }
+  const enrolledIds = new Set((membershipRows ?? []).map((row) => row.contact_id));
+  const members: CampaignMember[] = (membershipRows ?? []).flatMap((row) => {
+    const contact = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
+    if (!contact) return [];
+    const recipient = recipientsByContact.get(row.contact_id);
+    return [{
+      membershipId: row.id,
+      contactId: row.contact_id,
+      firstName: contact.first_name,
+      lastName: contact.last_name,
+      email: contact.email,
+      isUnsubscribed: contact.is_unsubscribed,
+      isSuppressed: contact.is_suppressed,
+      recipientId: recipient?.id ?? null,
+      deliveryStatus: recipient?.status ?? null,
+      sentAt: recipient?.sent_at ?? null,
+      repliedAt: recipient?.replied_at ?? null,
+      replySource: recipient?.reply_source ?? null,
+      sequenceStoppedAt: recipient?.sequence_stopped_at ?? null,
+      sequenceStopReason: recipient?.sequence_stop_reason ?? null,
+    }];
+  });
+
+  return {
+    campaign: base.campaign as CampaignWorkspaceData["campaign"],
+    stats: base.stats,
+    failures: base.failures,
+    engagement: base.engagement,
+    members,
+    eligibleContacts: (contacts ?? []).map((contact) => ({
+      ...contact,
+      enrolled: enrolledIds.has(contact.id),
+    })),
+    steps: (steps ?? []) as CampaignStep[],
+    activity: (activity ?? []).map((item) => ({
+      id: item.id,
+      eventType: item.event_type,
+      metadata:
+        item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
+          ? item.metadata as Record<string, unknown>
+          : {},
+      createdAt: item.created_at,
+    })),
+    replies: new Set(
+      (recipientRows ?? [])
+        .filter((recipient) => recipient.replied_at)
+        .map((recipient) => recipient.contact_id),
+    ).size,
+  };
 }

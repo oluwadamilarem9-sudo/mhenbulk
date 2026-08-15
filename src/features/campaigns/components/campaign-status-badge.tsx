@@ -8,6 +8,7 @@ const statusConfig: Record<CampaignStatus, { label: string; variant: "default" |
   paused: { label: "Paused", variant: "default" },
   completed: { label: "Completed", variant: "success" },
   cancelled: { label: "Cancelled", variant: "danger" },
+  failed: { label: "Failed", variant: "danger" },
 };
 
 export function CampaignStatusBadge({ status }: { status: CampaignStatus }) {

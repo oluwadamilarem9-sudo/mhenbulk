@@ -1,6 +1,9 @@
 /**
- * Campaign template rendering: {{first_name}}-style personalization and
- * compliance footer with the unsubscribe link.
+ * Campaign template rendering: {{first_name}}-style personalization.
+ *
+ * No unsubscribe footer is added to the body. Unsubscribe is offered through
+ * the List-Unsubscribe headers, which mail clients render as their own native
+ * control instead of visible text inside the message.
  */
 
 export type PersonalizationVars = {
@@ -27,32 +30,6 @@ export function renderTemplate(template: string, vars: PersonalizationVars): str
   });
 }
 
-export function appendUnsubscribeFooter(
-  html: string,
-  text: string | null,
-  unsubscribeUrl: string,
-): { html: string; text: string } {
-  const htmlFooter = `
-<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">
-  <p style="margin:0;">You are receiving this email because you are on our contact list.</p>
-  <p style="margin:4px 0 0;">
-    <a href="${unsubscribeUrl}" style="color:#4f46e5;text-decoration:underline;">Unsubscribe</a>
-    from future emails.
-  </p>
-</div>`;
-
-  const textFooter = `\n\n--\nUnsubscribe: ${unsubscribeUrl}`;
-
-  const htmlWithFooter = /<\/body>/i.test(html)
-    ? html.replace(/<\/body>/i, `${htmlFooter}</body>`)
-    : `${html}${htmlFooter}`;
-
-  return {
-    html: htmlWithFooter,
-    text: `${text ?? ""}${textFooter}`,
-  };
-}
-
 export type RenderedEmail = {
   subject: string;
   html: string;
@@ -64,17 +41,18 @@ export function renderCampaignEmail(input: {
   htmlContent: string;
   textContent: string | null;
   vars: PersonalizationVars;
-  unsubscribeUrl: string;
 }): RenderedEmail {
-  const subject = renderTemplate(input.subject, input.vars);
   const html = renderTemplate(input.htmlContent, input.vars);
-  const text = input.textContent ? renderTemplate(input.textContent, input.vars) : null;
-
-  const withFooter = appendUnsubscribeFooter(html, text, input.unsubscribeUrl);
 
   return {
-    subject,
-    html: withFooter.html,
-    text: withFooter.text,
+    subject: renderTemplate(input.subject, input.vars),
+    html,
+    text: input.textContent
+      ? renderTemplate(input.textContent, input.vars)
+      : html
+          .replace(/<[^>]*>/g, " ")
+          .replace(/&nbsp;/gi, " ")
+          .replace(/\s+/g, " ")
+          .trim(),
   };
 }

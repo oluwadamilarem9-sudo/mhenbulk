@@ -83,24 +83,53 @@ async function handleWorkerRequest(request: Request) {
 
   await resumeRateLimitedAccounts();
 
-  const { data: campaigns, error } = await supabase
-    .from("campaigns")
-    .select("id, user_id")
-    .eq("status", "sending")
-    .order("started_at", { ascending: true })
-    .limit(CAMPAIGNS_PER_RUN);
+  const nowIso = new Date().toISOString();
+  const [
+    { data: dueRecipients, error: dueError },
+    { data: automatedCampaigns, error: automationError },
+  ] = await Promise.all([
+    supabase
+      .from("campaign_recipients")
+      .select("campaign_id, user_id")
+      .in("status", ["pending", "queued"])
+      .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
+      .order("next_attempt_at", { ascending: true, nullsFirst: true })
+      .limit(100),
+    supabase
+      .from("campaigns")
+      .select("id, user_id")
+      .eq("automation_enabled", true)
+      .in("status", ["sending", "scheduled", "completed"])
+      .order("updated_at", { ascending: true })
+      .limit(50),
+  ]);
 
-  if (error) {
-    console.error("[queue-worker] Failed to list campaigns", error);
+  if (dueError || automationError) {
+    console.error("[queue-worker] Failed to list due work", {
+      dueError,
+      automationError,
+    });
     return Response.json(
-      { error: "Unable to list sending campaigns." },
+      { error: "Unable to list due campaigns." },
       { status: 500 },
     );
   }
 
+  const campaignMap = new Map<string, { id: string; user_id: string }>();
+  for (const row of dueRecipients ?? []) {
+    campaignMap.set(row.campaign_id, {
+      id: row.campaign_id,
+      user_id: row.user_id,
+    });
+  }
+  for (const campaign of automatedCampaigns ?? []) {
+    campaignMap.set(campaign.id, campaign);
+  }
+  const campaigns = [...campaignMap.values()].slice(0, CAMPAIGNS_PER_RUN);
+
   const results = [];
 
-  for (const campaign of campaigns ?? []) {
+  for (const campaign of campaigns) {
     const result = await processCampaignQueueBatch(
       supabase,
       campaign.user_id,

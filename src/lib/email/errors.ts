@@ -33,10 +33,14 @@ export function userFacingEmailError(
       return "Gmail sending quota was reached. The campaign has been paused.";
     case "invalid_recipient":
       return "Unable to send to this recipient address.";
+    case "provider_disabled":
+      return "Gmail sending is not enabled for this app yet. Enable the Gmail API in Google Cloud, then resume the campaign.";
     case "not_implemented":
       return "This email provider is not available yet.";
     case "network_error":
       return "Unable to send this email. It will be retried.";
+    case "delivery_unknown":
+      return "Gmail did not confirm whether this email was accepted. It was not retried to avoid sending a duplicate.";
     case "provider_error":
     default:
       return fallback ?? "Unable to send this email. It will be retried.";

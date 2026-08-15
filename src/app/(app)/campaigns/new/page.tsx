@@ -24,7 +24,17 @@ export default async function NewCampaignPage() {
     redirect("/login");
   }
 
-  const { accounts } = await listEmailAccounts(user.id);
+  const [{ accounts }, { data: contacts }] = await Promise.all([
+    listEmailAccounts(user.id),
+    supabase
+      .from("contacts")
+      .select("id, first_name, last_name, email")
+      .eq("user_id", user.id)
+      .eq("is_unsubscribed", false)
+      .eq("is_suppressed", false)
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -42,12 +52,12 @@ export default async function NewCampaignPage() {
         <CardHeader>
           <CardTitle>Campaign details</CardTitle>
           <CardDescription>
-            Fill in the message you want to send. Subject is optional — if blank, the
-            campaign name is used. Emails are sent from your connected Gmail account.
+            Fill in the message you want to send. Subject is optional and the internal
+            campaign name is never shown to recipients. Emails use your connected Gmail account.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <CampaignForm emailAccounts={accounts} />
+          <CampaignForm emailAccounts={accounts} availableContacts={contacts ?? []} />
         </CardContent>
       </Card>
     </div>

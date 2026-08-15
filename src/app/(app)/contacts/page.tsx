@@ -19,7 +19,7 @@ export default async function ContactsPage() {
     redirect("/login");
   }
 
-  const { contacts, error } = await listContacts(user.id);
+  const { contacts, tags, error } = await listContacts(user.id);
 
   return (
     <div className="space-y-6">
@@ -34,7 +34,7 @@ export default async function ContactsPage() {
 
       {error ? <Alert variant="error">{error}</Alert> : null}
 
-      <ContactsManager contacts={contacts} />
+      <ContactsManager contacts={contacts} tags={tags} />
     </div>
   );
 }
