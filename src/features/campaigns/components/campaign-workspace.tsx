@@ -27,18 +27,9 @@ import { processQueueBatchAction } from "@/features/campaigns/queue-actions";
 import type { CampaignWorkspaceData } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { subjectForDisplay } from "@/features/campaigns/schemas";
+import { CAMPAIGN_TABS, type CampaignTab } from "@/features/campaigns/tabs";
 import type { EmailAccountPublic } from "@/features/email-accounts/schemas";
 import { formatNumber } from "@/lib/utils";
-
-export const CAMPAIGN_TABS = [
-  "overview",
-  "recipients",
-  "sequence",
-  "activity",
-  "analytics",
-  "settings",
-] as const;
-export type CampaignTab = (typeof CAMPAIGN_TABS)[number];
 
 type Props = {
   data: CampaignWorkspaceData;

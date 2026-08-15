@@ -2,13 +2,10 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
-import {
-  CAMPAIGN_TABS,
-  CampaignWorkspace,
-  type CampaignTab,
-} from "@/features/campaigns/components/campaign-workspace";
+import { CampaignWorkspace } from "@/features/campaigns/components/campaign-workspace";
 import { getCampaignWorkspace } from "@/features/campaigns/queries";
 import { subjectForSend } from "@/features/campaigns/schemas";
+import { parseCampaignTab } from "@/features/campaigns/tabs";
 import { listEmailAccounts } from "@/features/email-accounts/queries";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { createClient } from "@/lib/supabase/server";
@@ -25,10 +22,7 @@ type CampaignPageProps = {
 export default async function CampaignPage({ params, searchParams }: CampaignPageProps) {
   const { id } = await params;
   const query = await searchParams;
-  const requestedTab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
-  const activeTab: CampaignTab = CAMPAIGN_TABS.includes(requestedTab as CampaignTab)
-    ? requestedTab as CampaignTab
-    : "overview";
+  const activeTab = parseCampaignTab(query.tab);
 
   if (!z.string().uuid().safeParse(id).success) {
     notFound();
