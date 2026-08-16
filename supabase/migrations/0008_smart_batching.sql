@@ -400,14 +400,15 @@ begin
   on conflict (campaign_id, batch_id) do nothing;
   get diagnostics linked_count = row_count;
 
+  -- removed_at is omitted so the distinct list carries no untyped literal; it
+  -- already defaults to null and the conflict path clears it explicitly.
   insert into public.campaign_contacts (
-    user_id, campaign_id, contact_id, removed_at
+    user_id, campaign_id, contact_id
   )
   select distinct
     current_user_id,
     p_campaign_id,
-    member.contact_id,
-    null
+    member.contact_id
   from public.contact_batch_members member
   join public.contacts contact on contact.id = member.contact_id
   where member.user_id = current_user_id

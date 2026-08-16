@@ -235,9 +235,9 @@ export async function createCampaignAction(
       },
     );
     if (batchError) {
+      console.error("[campaigns] batch enrollment failed", batchError);
       return {
-        error:
-          "Campaign created, but its Smart Batches could not be enrolled. Open Recipients and retry.",
+        error: `Campaign created, but its Smart Batches could not be enrolled. Open Recipients and retry. ${batchError.message}`.trim(),
         campaignId: data.id,
       };
     }
@@ -1110,7 +1110,10 @@ export async function importAndEnrollCampaignContactsAction(
     p_batch_ids: created.batch_ids,
   });
   if (enrollError) {
-    return { error: "Batches were created, but could not be linked to this campaign." };
+    console.error("[campaigns] batch enrollment failed", enrollError);
+    return {
+      error: `Batches were created, but could not be linked to this campaign. ${enrollError.message}`.trim(),
+    };
   }
   revalidatePath(`/campaigns/${campaign.id}`);
   revalidatePath("/contacts");

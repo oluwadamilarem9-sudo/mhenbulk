@@ -34,14 +34,27 @@ async function requireUser() {
   return { supabase, user };
 }
 
-function rpcError(message: string): string {
+function rpcError(
+  error: { message?: string; code?: string; details?: string | null },
+  fallback: string,
+): string {
+  const message = (error.message ?? "").trim();
   if (message.includes("No eligible contacts")) {
     return "No eligible active contacts were selected.";
   }
-  if (message.includes("migration") || message.includes("schema cache")) {
-    return "Smart Batching requires Supabase migration 0008.";
+  if (
+    error.code === "42P01" ||
+    error.code === "PGRST202" ||
+    error.code === "PGRST205" ||
+    message.includes("migration") ||
+    message.includes("schema cache")
+  ) {
+    return "Smart Batching requires the latest Supabase migration.";
   }
-  return "Unable to complete the Smart Batching operation.";
+  console.error("[smart-batching] database call failed", error);
+  // Surface the database reason: the guards above raise operator-readable text,
+  // and hiding anything else makes these failures impossible to diagnose.
+  return message ? `${fallback} ${message}` : fallback;
 }
 
 export async function createContactBatchesAction(
@@ -76,7 +89,7 @@ export async function createContactBatchesAction(
     p_source: parsed.data.source,
     p_name_prefix: "Batch",
   });
-  if (error) return { error: rpcError(error.message) };
+  if (error) return { error: rpcError(error, "Unable to create Smart Batches.") };
 
   const result = (data ?? {}) as BatchRpcResult;
   revalidatePath("/contacts");
@@ -227,7 +240,9 @@ export async function addBatchesToCampaignAction(
     p_campaign_id: parsed.data.campaignId,
     p_batch_ids: parsed.data.batchIds,
   });
-  if (error) return { error: rpcError(error.message) };
+  if (error) {
+    return { error: rpcError(error, "Unable to add these batches to the campaign.") };
+  }
   const result = (data ?? {}) as {
     batches_linked?: number;
     contacts_enrolled?: number;
@@ -298,7 +313,7 @@ export async function queueCampaignBatchAction(input: {
     p_timezone: parsed.data.timezone,
     p_max_attempts: maxRetries,
   });
-  if (error) return { error: rpcError(error.message) };
+  if (error) return { error: rpcError(error, "Unable to queue this batch.") };
   const result = (data ?? {}) as { queued?: number };
   revalidatePath(`/campaigns/${parsed.data.campaignId}`);
   revalidatePath(`/batches/${parsed.data.batchId}`);

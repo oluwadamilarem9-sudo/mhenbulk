@@ -7,7 +7,9 @@ limits.
 
 ## Database
 
-Apply `supabase/migrations/0008_smart_batching.sql` after migrations 0001–0007.
+Apply `supabase/migrations/0008_smart_batching.sql` after migrations 0001–0007,
+then `0009_fix_smart_batch_enrollment.sql`, which repairs the enrollment function
+shipped in 0008.
 
 The migration adds:
 
