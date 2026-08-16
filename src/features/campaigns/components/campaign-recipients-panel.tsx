@@ -20,6 +20,7 @@ import {
   parseContactsFile,
   type ParsedContactRow,
 } from "@/features/contacts/csv";
+import { contactDisplayName } from "@/features/contacts/format";
 import type {
   CampaignMember,
   EligibleCampaignContact,
@@ -163,7 +164,8 @@ export function CampaignRecipientsPanel({
                   />
                   <span className="min-w-0 text-sm">
                     <span className="block font-medium text-slate-900">
-                      {contact.first_name} {contact.last_name}
+                      {contactDisplayName(contact.first_name, contact.last_name) ||
+                        contact.email}
                     </span>
                     <span className="block truncate text-slate-500">{contact.email}</span>
                   </span>
@@ -236,7 +238,7 @@ export function CampaignRecipientsPanel({
                       <ul className="max-h-28 space-y-1 overflow-y-auto text-xs text-slate-600">
                         {importPreview.slice(0, 5).map((row) => (
                           <li key={`${row.line}-${row.email}`}>
-                            {row.first_name} {row.last_name}{" "}
+                            {contactDisplayName(row.first_name, row.last_name)}{" "}
                             <span className="text-slate-500">
                               {row.email || "(missing email)"}
                             </span>
@@ -285,7 +287,7 @@ export function CampaignRecipientsPanel({
             <div key={member.membershipId} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-slate-900">
-                  {member.firstName} {member.lastName}
+                  {contactDisplayName(member.firstName, member.lastName) || member.email}
                 </p>
                 <p className="truncate text-sm text-slate-500">{member.email}</p>
               </div>

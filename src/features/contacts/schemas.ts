@@ -11,7 +11,10 @@ export type ContactStatus = (typeof contactStatuses)[number];
 
 const optionalText = (maximum: number, message: string) =>
   z.preprocess(
-    (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+    (value) => {
+      if (value === undefined) return null;
+      return typeof value === "string" && value.trim() === "" ? null : value;
+    },
     z.string().trim().max(maximum, message).nullable(),
   );
 

@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RichTextEditor } from "@/features/campaigns/components/rich-text-editor";
+import { contactDisplayName } from "@/features/contacts/format";
 
 const initialState: CampaignActionState = {};
 
@@ -150,7 +151,8 @@ export function CampaignForm({
                   <input type="checkbox" name="contactIds" value={contact.id} />
                   <span className="min-w-0">
                     <span className="block font-medium text-slate-900">
-                      {contact.first_name} {contact.last_name}
+                      {contactDisplayName(contact.first_name, contact.last_name) ||
+                        contact.email}
                     </span>
                     <span className="block truncate text-slate-500">
                       {contact.email}

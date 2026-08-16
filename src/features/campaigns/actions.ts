@@ -1000,6 +1000,9 @@ export async function importAndEnrollCampaignContactsAction(
       firstName: row.first_name || "Unknown",
       lastName: row.last_name || "Unknown",
       email: row.email,
+      company: row.company,
+      phone: row.phone,
+      notes: row.notes,
     });
     return parsed.success
       ? [{
@@ -1007,6 +1010,9 @@ export async function importAndEnrollCampaignContactsAction(
           first_name: parsed.data.firstName,
           last_name: parsed.data.lastName,
           email: parsed.data.email,
+          company: parsed.data.company,
+          phone: parsed.data.phone,
+          notes: parsed.data.notes,
         }]
       : [];
   });

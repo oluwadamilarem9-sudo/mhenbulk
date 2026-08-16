@@ -19,6 +19,7 @@ import { RichTextEditor } from "@/features/campaigns/components/rich-text-editor
 import type { CampaignMember, CampaignStep } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { subjectForDisplay } from "@/features/campaigns/schemas";
+import { contactDisplayName } from "@/features/contacts/format";
 
 type Props = {
   campaignId: string;
@@ -267,7 +268,7 @@ export function CampaignSequencePanel({
             {members.map((member) => (
               <label key={member.contactId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50">
                 <input type="checkbox" name="contactIds" value={member.contactId} />
-                <span>{member.firstName} {member.lastName}</span>
+                <span>{contactDisplayName(member.firstName, member.lastName)}</span>
                 <span className="truncate text-slate-500">{member.email}</span>
               </label>
             ))}

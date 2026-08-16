@@ -29,6 +29,7 @@ import type {
 } from "@/features/contacts/queries";
 import { ContactForm } from "@/features/contacts/components/contact-form";
 import { CsvImport } from "@/features/contacts/components/csv-import";
+import { contactDisplayName } from "@/features/contacts/format";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -380,7 +381,8 @@ export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
                             ) : (
                               <ChevronDown className="h-4 w-4" />
                             )}
-                            {contact.first_name} {contact.last_name}
+                            {contactDisplayName(contact.first_name, contact.last_name) ||
+                              contact.email}
                           </button>
                           {contact.company ? (
                             <p className="ml-6 text-xs text-slate-500">{contact.company}</p>
