@@ -141,7 +141,7 @@ export function CampaignWorkspace({
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
             >
               <Send className="h-4 w-4" />
-              Review batches
+              Send batches
             </Link>
           ) : null}
           {isSending || isScheduled || isPaused ? (
@@ -245,8 +245,15 @@ export function CampaignWorkspace({
               <CardHeader>
                 <CardTitle>Campaign batches</CardTitle>
                 <CardDescription>
-                  Organization and scheduling status for this campaign&apos;s
-                  selected contact batches.
+                  Status for this campaign&apos;s selected contact batches. Send
+                  or schedule each one from the{" "}
+                  <Link
+                    href={`/campaigns/${campaign.id}?tab=recipients`}
+                    className="font-medium text-indigo-700"
+                  >
+                    Recipients tab
+                  </Link>
+                  .
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -319,6 +326,7 @@ export function CampaignWorkspace({
       {activeTab === "recipients" ? (
         <CampaignRecipientsPanel
           campaignId={campaign.id}
+          campaignTimezone={campaign.timezone}
           isDraft={isDraft}
           members={data.members}
           eligibleContacts={data.eligibleContacts}

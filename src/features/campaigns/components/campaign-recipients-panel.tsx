@@ -3,7 +3,10 @@
 import { useActionState, useMemo, useRef, useState, useTransition } from "react";
 import {
   Boxes,
+  CalendarClock,
   ExternalLink,
+  Pause,
+  Play,
   Search,
   Upload,
   UserPlus,
@@ -39,10 +42,13 @@ import type { CampaignActionState } from "@/features/campaigns/schemas";
 import {
   addBatchesToCampaignAction,
   createContactBatchesAction,
+  queueCampaignBatchAction,
+  setCampaignBatchPausedAction,
 } from "@/features/smart-batching/actions";
 
 type Props = {
   campaignId: string;
+  campaignTimezone: string;
   isDraft: boolean;
   members: CampaignMember[];
   eligibleContacts: EligibleCampaignContact[];
@@ -54,6 +60,7 @@ const initialState: CampaignActionState = {};
 
 export function CampaignRecipientsPanel({
   campaignId,
+  campaignTimezone,
   isDraft,
   members,
   eligibleContacts,
@@ -65,6 +72,10 @@ export function CampaignRecipientsPanel({
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
+  const [scheduleBatch, setScheduleBatch] = useState<CampaignBatchOption | null>(
+    null,
+  );
+  const [scheduledAt, setScheduledAt] = useState("");
   const [message, setMessage] = useState<CampaignActionState | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<ParsedContactRow[]>([]);
@@ -97,6 +108,21 @@ export function CampaignRecipientsPanel({
       setMessage(result);
       router.refresh();
     });
+  }
+
+  function sendBatch(batch: CampaignBatchOption, isoScheduledAt: string | null) {
+    run(() =>
+      queueCampaignBatchAction({
+        campaignId,
+        batchId: batch.id,
+        scheduledAt: isoScheduledAt,
+        timezone: campaignTimezone,
+      }),
+    );
+  }
+
+  function setBatchPaused(campaignBatchId: string, paused: boolean) {
+    run(() => setCampaignBatchPausedAction(campaignBatchId, paused));
   }
 
   async function previewImport(file: File | null) {
@@ -154,7 +180,8 @@ export function CampaignRecipientsPanel({
               <h3 className="font-semibold text-slate-900">Smart Batches</h3>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Select reusable contact batches without duplicating contacts.
+              Add batches without duplicating contacts, then send or schedule
+              each one below.
             </p>
           </div>
           {isDraft ? (
@@ -182,44 +209,105 @@ export function CampaignRecipientsPanel({
             {batches.map((batch) => (
               <div
                 key={batch.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2"
+                className="rounded-lg border border-slate-200 px-3 py-2"
               >
-                {isDraft && !batch.linked ? (
-                  <input
-                    type="checkbox"
-                    checked={selectedBatches.has(batch.id)}
-                    onChange={() =>
-                      setSelectedBatches((current) => {
-                        const next = new Set(current);
-                        if (next.has(batch.id)) next.delete(batch.id);
-                        else next.add(batch.id);
-                        return next;
-                      })
-                    }
-                    aria-label={`Select ${batch.name}`}
-                  />
-                ) : null}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">
-                    {batch.name}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {batch.totalContacts} contacts
-                    {batch.scheduledAt
-                      ? ` · ${new Date(batch.scheduledAt).toLocaleString()}`
-                      : ""}
-                  </p>
+                <div className="flex items-center gap-3">
+                  {isDraft && !batch.linked ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedBatches.has(batch.id)}
+                      onChange={() =>
+                        setSelectedBatches((current) => {
+                          const next = new Set(current);
+                          if (next.has(batch.id)) next.delete(batch.id);
+                          else next.add(batch.id);
+                          return next;
+                        })
+                      }
+                      aria-label={`Select ${batch.name}`}
+                    />
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-900">
+                      {batch.name}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {batch.totalContacts} contacts
+                      {batch.scheduledAt
+                        ? ` · ${new Date(batch.scheduledAt).toLocaleString()}`
+                        : ""}
+                    </p>
+                  </div>
+                  <Badge variant={batch.linked ? "success" : "muted"}>
+                    {batch.linked ? batch.status : "Available"}
+                  </Badge>
+                  <Link
+                    href={`/batches/${batch.id}`}
+                    aria-label={`View ${batch.name}`}
+                    className="rounded p-1 text-indigo-700 hover:bg-indigo-50"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Link>
                 </div>
-                <Badge variant={batch.linked ? "success" : "muted"}>
-                  {batch.linked ? batch.status : "Available"}
-                </Badge>
-                <Link
-                  href={`/batches/${batch.id}`}
-                  aria-label={`View ${batch.name}`}
-                  className="rounded p-1 text-indigo-700 hover:bg-indigo-50"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </Link>
+
+                {batch.linked && batch.campaignBatchId ? (
+                  <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+                    {batch.status === "ready" ? (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => sendBatch(batch, null)}
+                        >
+                          <Play className="h-4 w-4" />
+                          Send now
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() => {
+                            setScheduledAt("");
+                            setScheduleBatch(batch);
+                          }}
+                        >
+                          <CalendarClock className="h-4 w-4" />
+                          Schedule
+                        </Button>
+                      </>
+                    ) : null}
+                    {batch.status === "scheduled" || batch.status === "processing" ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() =>
+                          setBatchPaused(batch.campaignBatchId as string, true)
+                        }
+                      >
+                        <Pause className="h-4 w-4" />
+                        Pause
+                      </Button>
+                    ) : null}
+                    {batch.status === "paused" ? (
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          setBatchPaused(batch.campaignBatchId as string, false)
+                        }
+                      >
+                        <Play className="h-4 w-4" />
+                        Resume
+                      </Button>
+                    ) : null}
+                    {batch.status === "completed" ? (
+                      <p className="text-xs text-slate-500">
+                        All emails in this batch have been processed.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -489,6 +577,45 @@ export function CampaignRecipientsPanel({
         Reply detection depends on the email provider. Until a provider reports a reply,
         use “Mark replied” to stop future automated steps for that contact.
       </p>
+
+      {scheduleBatch ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-900">
+              Schedule {scheduleBatch.name}
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              {scheduleBatch.totalContacts} contacts will be queued and sent by
+              the existing Gmail queue at this time ({campaignTimezone}).
+            </p>
+            <Label className="mt-4 block">
+              Send at
+              <Input
+                className="mt-1"
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(event) => setScheduledAt(event.target.value)}
+              />
+            </Label>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setScheduleBatch(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy || !scheduledAt}
+                onClick={() => {
+                  const batch = scheduleBatch;
+                  setScheduleBatch(null);
+                  sendBatch(batch, new Date(scheduledAt).toISOString());
+                }}
+              >
+                <CalendarClock className="h-4 w-4" />
+                Schedule batch
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
