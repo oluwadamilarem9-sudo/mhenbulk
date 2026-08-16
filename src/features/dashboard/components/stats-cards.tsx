@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Layers,
   MailCheck,
   Megaphone,
   Users,
@@ -41,6 +42,13 @@ const STATS: StatItem[] = [
     accent: "bg-violet-50 text-violet-700",
   },
   {
+    key: "smartBatches",
+    label: "Smart Batches",
+    description: "Contact cohorts ready to send",
+    icon: Layers,
+    accent: "bg-amber-50 text-amber-700",
+  },
+  {
     key: "emailsSent",
     label: "Emails sent",
     description: "Messages with a send timestamp",
@@ -69,10 +77,14 @@ type StatsCardsProps = {
 
 export function StatsCards({ metrics }: StatsCardsProps) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {STATS.map((stat) => {
         const Icon = stat.icon;
         const value = metrics[stat.key];
+        const activeNote =
+          stat.key === "smartBatches" && metrics.activeSmartBatches > 0
+            ? `${formatNumber(metrics.activeSmartBatches)} scheduled, processing, or paused`
+            : null;
 
         return (
           <Card key={stat.key}>
@@ -90,7 +102,9 @@ export function StatsCards({ metrics }: StatsCardsProps) {
               </span>
             </CardHeader>
             <CardContent>
-              <p className="text-xs text-slate-500">{stat.description}</p>
+              <p className="text-xs text-slate-500">
+                {activeNote ?? stat.description}
+              </p>
             </CardContent>
           </Card>
         );

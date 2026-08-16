@@ -43,7 +43,7 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
   const finderScanId = z.string().uuid().safeParse(rawFinderScanId);
   const finderBatchId = z.string().uuid().safeParse(rawFinderBatchId);
 
-  const [{ accounts }, { data: contacts }] = await Promise.all([
+  const [{ accounts }, { data: contacts }, { data: batches }] = await Promise.all([
     listEmailAccounts(user.id),
     supabase
       .from("contacts")
@@ -53,6 +53,11 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
       .eq("is_suppressed", false)
       .order("created_at", { ascending: false })
       .limit(500),
+    supabase
+      .from("contact_batches")
+      .select("id, name, total_contacts")
+      .eq("user_id", user.id)
+      .order("batch_number", { ascending: true }),
   ]);
 
   let preselectedContactIds: string[] = [];
@@ -123,6 +128,7 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
             preselectedContactIds={preselectedContactIds}
             finderScanId={finderScanId.success ? finderScanId.data : null}
             finderBatchId={finderBatchId.success ? finderBatchId.data : null}
+            availableBatches={batches ?? []}
           />
         </CardContent>
       </Card>

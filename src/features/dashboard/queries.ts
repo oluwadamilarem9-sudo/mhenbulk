@@ -6,6 +6,8 @@ export type DashboardMetrics = {
   emailsSent: number;
   successfulEmails: number;
   failedEmails: number;
+  smartBatches: number;
+  activeSmartBatches: number;
 };
 
 const emptyMetrics: DashboardMetrics = {
@@ -14,6 +16,8 @@ const emptyMetrics: DashboardMetrics = {
   emailsSent: 0,
   successfulEmails: 0,
   failedEmails: 0,
+  smartBatches: 0,
+  activeSmartBatches: 0,
 };
 
 export async function getDashboardMetrics(userId: string): Promise<{
@@ -28,6 +32,8 @@ export async function getDashboardMetrics(userId: string): Promise<{
     sentResult,
     successfulResult,
     failedResult,
+    batchesResult,
+    activeBatchesResult,
   ] = await Promise.all([
     supabase
       .from("contacts")
@@ -52,6 +58,15 @@ export async function getDashboardMetrics(userId: string): Promise<{
       .select("*", { count: "exact", head: true })
       .eq("user_id", userId)
       .in("status", ["failed", "bounced"]),
+    supabase
+      .from("contact_batches")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId),
+    supabase
+      .from("contact_batches")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("status", ["scheduled", "processing", "paused"]),
   ]);
 
   const firstError =
@@ -72,6 +87,12 @@ export async function getDashboardMetrics(userId: string): Promise<{
     };
   }
 
+  const batchesMissing =
+    batchesResult.error?.code === "42P01" ||
+    batchesResult.error?.code === "PGRST205" ||
+    activeBatchesResult.error?.code === "42P01" ||
+    activeBatchesResult.error?.code === "PGRST205";
+
   return {
     metrics: {
       totalContacts: contactsResult.count ?? 0,
@@ -79,6 +100,10 @@ export async function getDashboardMetrics(userId: string): Promise<{
       emailsSent: sentResult.count ?? 0,
       successfulEmails: successfulResult.count ?? 0,
       failedEmails: failedResult.count ?? 0,
+      smartBatches: batchesMissing ? 0 : (batchesResult.count ?? 0),
+      activeSmartBatches: batchesMissing
+        ? 0
+        : (activeBatchesResult.count ?? 0),
     },
   };
 }

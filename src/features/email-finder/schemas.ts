@@ -40,6 +40,9 @@ export type EmailFinderActionState = {
   enrolled?: number;
   campaignId?: string;
   ineligible?: number;
+  batchesCreated?: number;
+  contactsBatched?: number;
+  batchIds?: string[];
 };
 
 export const USER_FACING_SCAN_ERRORS: Record<string, string> = {

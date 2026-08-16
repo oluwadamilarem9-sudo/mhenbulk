@@ -84,7 +84,7 @@ export async function listContacts(userId: string): Promise<{
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(5000);
 
   if (error) {
     return {

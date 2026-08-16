@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { ContactsManager } from "@/features/contacts/components/contacts-manager";
 import { listContacts } from "@/features/contacts/queries";
+import { SmartBatchesPanel } from "@/features/smart-batching/components/smart-batches-panel";
+import { getSmartBatchingWorkspace } from "@/features/smart-batching/queries";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
@@ -19,7 +21,10 @@ export default async function ContactsPage() {
     redirect("/login");
   }
 
-  const { contacts, tags, error } = await listContacts(user.id);
+  const [{ contacts, tags, error }, batching] = await Promise.all([
+    listContacts(user.id),
+    getSmartBatchingWorkspace(user.id),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -33,8 +38,19 @@ export default async function ContactsPage() {
       </div>
 
       {error ? <Alert variant="error">{error}</Alert> : null}
+      {batching.error ? <Alert variant="error">{batching.error}</Alert> : null}
 
-      <ContactsManager contacts={contacts} tags={tags} />
+      <SmartBatchesPanel
+        batches={batching.batches}
+        defaultBatchSize={batching.defaultBatchSize}
+        campaigns={batching.campaigns}
+      />
+
+      <ContactsManager
+        contacts={contacts}
+        tags={tags}
+        defaultBatchSize={batching.defaultBatchSize}
+      />
     </div>
   );
 }

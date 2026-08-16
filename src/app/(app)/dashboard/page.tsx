@@ -48,6 +48,12 @@ export default async function DashboardPage() {
             Manage contacts
           </Link>
           <Link
+            href="/contacts#smart-batches"
+            className="inline-flex h-10 items-center justify-center rounded-lg bg-white px-4 text-sm font-medium text-slate-900 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50"
+          >
+            Smart Batches
+          </Link>
+          <Link
             href="/campaigns"
             className="inline-flex h-10 items-center justify-center rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
           >
@@ -70,10 +76,13 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-slate-600">
             <ul className="list-disc space-y-1 pl-5">
-              <li>Add contacts manually or import a CSV on the Contacts page.</li>
               <li>
-                Create a campaign, preview it with {"{{first_name}}"} personalization,
-                send yourself a test, then start sending.
+                Add contacts manually, paste emails, or import a CSV on the Contacts
+                page — imports create Smart Batches automatically.
+              </li>
+              <li>
+                Create a campaign, attach batches, preview with {"{{first_name}}"}{" "}
+                personalization, send yourself a test, then queue a batch.
               </li>
             </ul>
           </CardContent>

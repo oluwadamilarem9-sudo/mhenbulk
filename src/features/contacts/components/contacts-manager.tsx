@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Boxes,
   ChevronDown,
   ChevronUp,
   Mail,
@@ -29,6 +30,8 @@ import type {
 } from "@/features/contacts/queries";
 import { ContactForm } from "@/features/contacts/components/contact-form";
 import { CsvImport } from "@/features/contacts/components/csv-import";
+import { PasteContacts } from "@/features/contacts/components/paste-contacts";
+import { createContactBatchesAction } from "@/features/smart-batching/actions";
 import { contactDisplayName } from "@/features/contacts/format";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +42,7 @@ import { Input } from "@/components/ui/input";
 type ContactsManagerProps = {
   contacts: ContactRow[];
   tags: ContactTag[];
+  defaultBatchSize: number;
 };
 
 type EditorState =
@@ -56,7 +60,11 @@ const statusPresentation: Record<
   invalid: { label: "Invalid", variant: "muted" },
 };
 
-export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
+export function ContactsManager({
+  contacts,
+  tags,
+  defaultBatchSize,
+}: ContactsManagerProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | ContactStatus>("all");
@@ -142,6 +150,37 @@ export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
         text: result.success ?? "Selected contacts deleted.",
       });
       router.refresh();
+    });
+  }
+
+  function handleCreateBatches() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    const entered = window.prompt(
+      `Create Smart Batches for ${ids.length} selected contacts.\nBatch size:`,
+      String(defaultBatchSize),
+    );
+    if (entered === null) return;
+    const batchSize = Number(entered);
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 1000) {
+      setMessage({
+        kind: "error",
+        text: "Batch size must be a whole number from 1 to 1,000.",
+      });
+      return;
+    }
+    setMessage(null);
+    startTransition(async () => {
+      const result = await createContactBatchesAction(ids, batchSize, "manual");
+      setMessage(
+        result.error
+          ? { kind: "error", text: result.error }
+          : { kind: "success", text: result.success ?? "Batches created." },
+      );
+      if (!result.error) {
+        setSelectedIds(new Set());
+        router.refresh();
+      }
     });
   }
 
@@ -250,7 +289,8 @@ export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
           </select>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <CsvImport />
+          <CsvImport defaultBatchSize={defaultBatchSize} />
+          <PasteContacts defaultBatchSize={defaultBatchSize} />
           <Button onClick={() => setEditor({ mode: "create" })}>
             <Plus className="h-4 w-4" />
             Add contact
@@ -264,6 +304,15 @@ export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
             {selectedIds.size} contact{selectedIds.size === 1 ? "" : "s"} selected
           </p>
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={isPending}
+              onClick={handleCreateBatches}
+            >
+              <Boxes className="h-4 w-4" />
+              Create batches
+            </Button>
             <Button
               variant="ghost"
               size="sm"

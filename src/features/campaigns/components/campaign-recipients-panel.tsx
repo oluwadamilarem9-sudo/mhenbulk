@@ -1,7 +1,16 @@
 "use client";
 
 import { useActionState, useMemo, useRef, useState, useTransition } from "react";
-import { Search, Upload, UserPlus, UserRoundCheck, X } from "lucide-react";
+import {
+  Boxes,
+  ExternalLink,
+  Search,
+  Upload,
+  UserPlus,
+  UserRoundCheck,
+  X,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
@@ -23,15 +32,22 @@ import {
 import { contactDisplayName } from "@/features/contacts/format";
 import type {
   CampaignMember,
+  CampaignBatchOption,
   EligibleCampaignContact,
 } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
+import {
+  addBatchesToCampaignAction,
+  createContactBatchesAction,
+} from "@/features/smart-batching/actions";
 
 type Props = {
   campaignId: string;
   isDraft: boolean;
   members: CampaignMember[];
   eligibleContacts: EligibleCampaignContact[];
+  batches: CampaignBatchOption[];
+  defaultBatchSize: number;
 };
 
 const initialState: CampaignActionState = {};
@@ -41,15 +57,19 @@ export function CampaignRecipientsPanel({
   isDraft,
   members,
   eligibleContacts,
+  batches,
+  defaultBatchSize,
 }: Props) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<CampaignActionState | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<ParsedContactRow[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importBatchSize, setImportBatchSize] = useState(defaultBatchSize);
   const [busy, startTransition] = useTransition();
   const [addState, addAction, addPending] = useActionState(
     addAndEnrollContactAction,
@@ -98,6 +118,7 @@ export function CampaignRecipientsPanel({
     const data = new FormData();
     data.set("campaignId", campaignId);
     data.set("file", importFile);
+    data.set("batchSize", String(importBatchSize));
     run(() => importAndEnrollCampaignContactsAction(data));
     setImportFile(null);
     setImportPreview([]);
@@ -125,6 +146,91 @@ export function CampaignRecipientsPanel({
         />
       </div>
 
+      <section className="rounded-xl border border-slate-200 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Boxes className="h-4 w-4 text-indigo-600" />
+              <h3 className="font-semibold text-slate-900">Smart Batches</h3>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Select reusable contact batches without duplicating contacts.
+            </p>
+          </div>
+          {isDraft ? (
+            <Button
+              size="sm"
+              disabled={busy || selectedBatches.size === 0}
+              onClick={() =>
+                run(async () => {
+                  const result = await addBatchesToCampaignAction(campaignId, [
+                    ...selectedBatches,
+                  ]);
+                  if (!result.error) setSelectedBatches(new Set());
+                  return result;
+                })
+              }
+            >
+              <UserPlus className="h-4 w-4" />
+              Add {selectedBatches.size || ""} batch
+              {selectedBatches.size === 1 ? "" : "es"}
+            </Button>
+          ) : null}
+        </div>
+        {batches.length ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {batches.map((batch) => (
+              <div
+                key={batch.id}
+                className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2"
+              >
+                {isDraft && !batch.linked ? (
+                  <input
+                    type="checkbox"
+                    checked={selectedBatches.has(batch.id)}
+                    onChange={() =>
+                      setSelectedBatches((current) => {
+                        const next = new Set(current);
+                        if (next.has(batch.id)) next.delete(batch.id);
+                        else next.add(batch.id);
+                        return next;
+                      })
+                    }
+                    aria-label={`Select ${batch.name}`}
+                  />
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-900">
+                    {batch.name}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {batch.totalContacts} contacts
+                    {batch.scheduledAt
+                      ? ` · ${new Date(batch.scheduledAt).toLocaleString()}`
+                      : ""}
+                  </p>
+                </div>
+                <Badge variant={batch.linked ? "success" : "muted"}>
+                  {batch.linked ? batch.status : "Available"}
+                </Badge>
+                <Link
+                  href={`/batches/${batch.id}`}
+                  aria-label={`View ${batch.name}`}
+                  className="rounded p-1 text-indigo-700 hover:bg-indigo-50"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </Link>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="py-5 text-center text-sm text-slate-500">
+            No Smart Batches yet. Create one from Contacts or import a contact
+            file.
+          </p>
+        )}
+      </section>
+
       {isDraft ? (
         <div className="grid gap-5 xl:grid-cols-2">
           <section className="rounded-xl border border-slate-200 p-4">
@@ -144,6 +250,38 @@ export function CampaignRecipientsPanel({
               >
                 <UserPlus className="h-4 w-4" />
                 Add {selected.size || ""}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy || selected.size === 0}
+                onClick={() => {
+                  const value = window.prompt(
+                    `Create campaign batches for ${selected.size} selected contacts. Batch size:`,
+                    String(defaultBatchSize),
+                  );
+                  if (value === null) return;
+                  const size = Number(value);
+                  run(async () => {
+                    const created = await createContactBatchesAction(
+                      [...selected],
+                      size,
+                      "manual",
+                    );
+                    if (created.error || !created.batchIds?.length) return created;
+                    const enrolled = await addBatchesToCampaignAction(
+                      campaignId,
+                      created.batchIds,
+                    );
+                    if (!enrolled.error) {
+                      setSelected(new Set());
+                    }
+                    return enrolled;
+                  });
+                }}
+              >
+                <Boxes className="h-4 w-4" />
+                Create batches
               </Button>
             </div>
             <div className="max-h-64 space-y-1 overflow-y-auto">
@@ -245,13 +383,30 @@ export function CampaignRecipientsPanel({
                           </li>
                         ))}
                       </ul>
+                      <label className="block text-xs font-medium text-slate-700">
+                        Smart Batch size
+                        <Input
+                          className="mt-1"
+                          type="number"
+                          min={1}
+                          max={1000}
+                          value={importBatchSize}
+                          onChange={(event) =>
+                            setImportBatchSize(Number(event.target.value))
+                          }
+                        />
+                      </label>
                     </>
                   )}
                   <div className="flex gap-2">
                     <Button
                       size="sm"
                       disabled={
-                        busy || Boolean(importError) || importPreview.length === 0
+                        busy ||
+                        Boolean(importError) ||
+                        importPreview.length === 0 ||
+                        importBatchSize < 1 ||
+                        importBatchSize > 1000
                       }
                       onClick={confirmImport}
                     >

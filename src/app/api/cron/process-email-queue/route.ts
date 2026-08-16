@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { processCampaignQueueBatch } from "@/features/campaigns/queue-worker";
+import { getQueueConfig } from "@/lib/env";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -126,21 +127,60 @@ async function handleWorkerRequest(request: Request) {
     campaignMap.set(campaign.id, campaign);
   }
   const campaigns = [...campaignMap.values()].slice(0, CAMPAIGNS_PER_RUN);
-
-  const results = [];
-
-  for (const campaign of campaigns) {
-    const result = await processCampaignQueueBatch(
-      supabase,
-      campaign.user_id,
+  const { data: campaignAccounts } = campaigns.length
+    ? await supabase
+        .from("campaigns")
+        .select("id, email_account_id")
+        .in(
+          "id",
+          campaigns.map((campaign) => campaign.id),
+        )
+    : { data: [] };
+  const accountByCampaign = new Map(
+    (campaignAccounts ?? []).map((campaign) => [
       campaign.id,
-    );
-
-    results.push({
-      campaignId: campaign.id,
-      ...result,
-    });
+      campaign.email_account_id,
+    ]),
+  );
+  const groups = new Map<
+    string,
+    Array<{ id: string; user_id: string }>
+  >();
+  for (const campaign of campaigns) {
+    // Campaigns sharing one Gmail account always remain sequential. Configured
+    // concurrency only runs independent sending accounts alongside each other.
+    const key = `${campaign.user_id}:${
+      accountByCampaign.get(campaign.id) ?? campaign.id
+    }`;
+    groups.set(key, [...(groups.get(key) ?? []), campaign]);
   }
+
+  const results: Array<
+    { campaignId: string } & Awaited<
+      ReturnType<typeof processCampaignQueueBatch>
+    >
+  > = [];
+  const accountGroups = [...groups.values()];
+  const { concurrency } = getQueueConfig();
+  let nextGroup = 0;
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, accountGroups.length) },
+      async () => {
+        while (nextGroup < accountGroups.length) {
+          const group = accountGroups[nextGroup++];
+          for (const campaign of group) {
+            const result = await processCampaignQueueBatch(
+              supabase,
+              campaign.user_id,
+              campaign.id,
+            );
+            results.push({ campaignId: campaign.id, ...result });
+          }
+        }
+      },
+    ),
+  );
 
   const summary = results.reduce(
     (totals, result) => ({

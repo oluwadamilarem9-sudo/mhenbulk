@@ -58,6 +58,17 @@ export type CampaignActivityItem = {
   createdAt: string;
 };
 
+export type CampaignBatchOption = {
+  id: string;
+  name: string;
+  totalContacts: number;
+  status: string;
+  linked: boolean;
+  campaignBatchId: string | null;
+  scheduledAt: string | null;
+  contactIds: string[];
+};
+
 export type CampaignWorkspaceData = {
   campaign: CampaignRow & { automation_enabled: boolean; timezone: string };
   stats: CampaignStats;
@@ -68,6 +79,8 @@ export type CampaignWorkspaceData = {
   steps: CampaignStep[];
   activity: CampaignActivityItem[];
   replies: number;
+  batches: CampaignBatchOption[];
+  defaultBatchSize: number;
 };
 
 export type CampaignStats = {
@@ -231,6 +244,10 @@ export async function getCampaignWorkspace(
     { data: steps },
     { data: activity },
     { data: recipientRows },
+    { data: contactBatches },
+    { data: campaignBatches },
+    { data: profile },
+    { data: batchMembers },
   ] = await Promise.all([
     supabase
       .from("campaign_contacts")
@@ -268,6 +285,25 @@ export async function getCampaignWorkspace(
       .eq("campaign_id", campaignId)
       .eq("user_id", userId)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("contact_batches")
+      .select("id, name, total_contacts, status")
+      .eq("user_id", userId)
+      .order("batch_number", { ascending: true }),
+    supabase
+      .from("campaign_batches")
+      .select("id, batch_id, status, scheduled_at")
+      .eq("campaign_id", campaignId)
+      .eq("user_id", userId),
+    supabase
+      .from("profiles")
+      .select("default_batch_size")
+      .eq("id", userId)
+      .maybeSingle(),
+    supabase
+      .from("contact_batch_members")
+      .select("batch_id, contact_id")
+      .eq("user_id", userId),
   ]);
 
   const recipientsByContact = new Map<string, NonNullable<typeof recipientRows>[number]>();
@@ -278,6 +314,16 @@ export async function getCampaignWorkspace(
     }
   }
   const enrolledIds = new Set((membershipRows ?? []).map((row) => row.contact_id));
+  const campaignBatchByBatch = new Map(
+    (campaignBatches ?? []).map((link) => [link.batch_id, link]),
+  );
+  const contactsByBatch = new Map<string, string[]>();
+  for (const member of batchMembers ?? []) {
+    contactsByBatch.set(member.batch_id, [
+      ...(contactsByBatch.get(member.batch_id) ?? []),
+      member.contact_id,
+    ]);
+  }
   const members: CampaignMember[] = (membershipRows ?? []).flatMap((row) => {
     const contact = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
     if (!contact) return [];
@@ -325,5 +371,19 @@ export async function getCampaignWorkspace(
         .filter((recipient) => recipient.replied_at)
         .map((recipient) => recipient.contact_id),
     ).size,
+    batches: (contactBatches ?? []).map((batch) => {
+      const link = campaignBatchByBatch.get(batch.id);
+      return {
+        id: batch.id,
+        name: batch.name,
+        totalContacts: batch.total_contacts,
+        status: link?.status ?? batch.status,
+        linked: Boolean(link),
+        campaignBatchId: link?.id ?? null,
+        scheduledAt: link?.scheduled_at ?? null,
+        contactIds: contactsByBatch.get(batch.id) ?? [],
+      };
+    }),
+    defaultBatchSize: profile?.default_batch_size ?? 50,
   };
 }

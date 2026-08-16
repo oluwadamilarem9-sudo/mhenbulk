@@ -58,6 +58,7 @@ export function CampaignWorkspace({
   const isSending = campaign.status === "sending";
   const isScheduled = campaign.status === "scheduled";
   const isPaused = campaign.status === "paused";
+  const hasLinkedBatches = data.batches.some((batch) => batch.linked);
 
   const runQueueBatch = useCallback(async () => {
     if (processingRef.current) return;
@@ -128,11 +129,20 @@ export function CampaignWorkspace({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {isDraft ? (
+          {isDraft && !hasLinkedBatches ? (
             <Button onClick={launch} disabled={busy || !senderLabel || data.members.length === 0}>
               <Send className="h-4 w-4" />
               Launch to {data.members.length}
             </Button>
+          ) : null}
+          {isDraft && hasLinkedBatches ? (
+            <Link
+              href={`/campaigns/${campaign.id}?tab=recipients`}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
+            >
+              <Send className="h-4 w-4" />
+              Review batches
+            </Link>
           ) : null}
           {isSending || isScheduled || isPaused ? (
             <Button
@@ -230,6 +240,48 @@ export function CampaignWorkspace({
               </CardContent>
             </Card>
           ) : null}
+          {data.batches.some((batch) => batch.linked) ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Campaign batches</CardTitle>
+                <CardDescription>
+                  Organization and scheduling status for this campaign&apos;s
+                  selected contact batches.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {data.batches
+                  .filter((batch) => batch.linked)
+                  .map((batch) => (
+                    <Link
+                      key={batch.id}
+                      href={`/batches/${batch.id}`}
+                      className="rounded-xl border border-slate-200 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/40"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-sm font-semibold text-slate-900">
+                          {batch.name}
+                        </p>
+                        <Badge
+                          variant={
+                            batch.status === "completed"
+                              ? "success"
+                              : batch.status === "failed"
+                                ? "danger"
+                                : "info"
+                          }
+                        >
+                          {batch.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {batch.totalContacts} contacts
+                      </p>
+                    </Link>
+                  ))}
+              </CardContent>
+            </Card>
+          ) : null}
           <div className="grid gap-6 xl:grid-cols-2">
             <Card>
               <CardHeader>
@@ -270,6 +322,8 @@ export function CampaignWorkspace({
           isDraft={isDraft}
           members={data.members}
           eligibleContacts={data.eligibleContacts}
+          batches={data.batches}
+          defaultBatchSize={data.defaultBatchSize}
         />
       ) : null}
 
@@ -281,6 +335,7 @@ export function CampaignWorkspace({
           campaignTimezone={campaign.timezone}
           steps={data.steps}
           members={data.members}
+          batches={data.batches.filter((batch) => batch.linked)}
         />
       ) : null}
 

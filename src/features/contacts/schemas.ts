@@ -54,4 +54,9 @@ export type CsvImportResult = {
   duplicates?: number;
   invalid?: number;
   invalidRows?: string[];
+  batchesCreated?: number;
+  contactsBatched?: number;
+  batchSize?: number;
+  batchIds?: string[];
+  batchError?: string;
 };

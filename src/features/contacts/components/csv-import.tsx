@@ -2,24 +2,29 @@
 
 import { useRef, useState, useTransition } from "react";
 import { Upload, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { importContactsCsvAction } from "@/features/contacts/actions";
 import { parseContactsFile, type ParsedContactRow } from "@/features/contacts/csv";
 import type { CsvImportResult } from "@/features/contacts/schemas";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type Props = {
   /** Extra guidance shown when a file cannot be read as a contact list. */
   errorHint?: string;
+  defaultBatchSize?: number;
 };
 
-export function CsvImport({ errorHint }: Props = {}) {
+export function CsvImport({ errorHint, defaultBatchSize = 50 }: Props = {}) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<CsvImportResult | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ParsedContactRow[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [batchSize, setBatchSize] = useState(defaultBatchSize);
   const [pending, startTransition] = useTransition();
 
   async function handleFileSelected(selectedFile: File | null) {
@@ -41,6 +46,7 @@ export function CsvImport({ errorHint }: Props = {}) {
     if (!file) return;
     const formData = new FormData();
     formData.set("file", file);
+    formData.set("batchSize", String(batchSize));
 
     startTransition(async () => {
       const importResult = await importContactsCsvAction(formData);
@@ -48,6 +54,7 @@ export function CsvImport({ errorHint }: Props = {}) {
       if (!importResult.error) {
         setFile(null);
         setPreview([]);
+        router.refresh();
       }
       if (inputRef.current) {
         inputRef.current.value = "";
@@ -163,6 +170,17 @@ export function CsvImport({ errorHint }: Props = {}) {
                     Showing 10 of {preview.length} rows.
                   </p>
                 ) : null}
+                <label className="mt-4 block max-w-xs text-sm font-medium text-slate-700">
+                  Smart Batch size
+                  <Input
+                    className="mt-1"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={batchSize}
+                    onChange={(event) => setBatchSize(Number(event.target.value))}
+                  />
+                </label>
               </>
             )}
 
@@ -172,7 +190,13 @@ export function CsvImport({ errorHint }: Props = {}) {
               </Button>
               <Button
                 onClick={confirmImport}
-                disabled={pending || Boolean(previewError) || valid === 0}
+                disabled={
+                  pending ||
+                  Boolean(previewError) ||
+                  valid === 0 ||
+                  batchSize < 1 ||
+                  batchSize > 1000
+                }
               >
                 {pending ? "Importing..." : `Import ${valid} contact${valid === 1 ? "" : "s"}`}
               </Button>
@@ -199,6 +223,12 @@ export function CsvImport({ errorHint }: Props = {}) {
           Imported {result.imported} contact{result.imported === 1 ? "" : "s"}
           {result.duplicates ? `, skipped ${result.duplicates} duplicate(s)` : ""}
           {result.invalid ? `, ${result.invalid} invalid row(s)` : ""}.
+          {result.batchesCreated
+            ? ` Created ${result.batchesCreated} batch${
+                result.batchesCreated === 1 ? "" : "es"
+              } of up to ${result.batchSize}.`
+            : ""}
+          {result.batchError ? ` ${result.batchError}` : ""}
           {result.invalidRows && result.invalidRows.length > 0 ? (
             <ul className="mt-1 list-disc pl-5 text-xs">
               {result.invalidRows.map((row) => (

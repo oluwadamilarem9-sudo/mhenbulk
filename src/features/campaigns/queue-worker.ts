@@ -85,7 +85,7 @@ async function pauseForAccountIssue(
     .eq("user_id", userId);
 
   // Pause all sending campaigns that share this account.
-  await supabase
+  const { data: affectedCampaigns } = await supabase
     .from("campaigns")
     .update({
       status: "paused",
@@ -94,11 +94,111 @@ async function pauseForAccountIssue(
     })
     .eq("user_id", userId)
     .eq("email_account_id", emailAccountId)
-    .eq("status", "sending");
+    .eq("status", "sending")
+    .select("id");
+
+  const affectedIds = (affectedCampaigns ?? []).map((campaign) => campaign.id);
+  if (affectedIds.length) {
+    const { data: affectedBatches } = await supabase
+      .from("campaign_batches")
+      .select("batch_id")
+      .eq("user_id", userId)
+      .in("campaign_id", affectedIds)
+      .in("status", ["processing", "scheduled"]);
+    await supabase
+      .from("campaign_batches")
+      .update({
+        status: "paused",
+        provider_error: message,
+      })
+      .eq("user_id", userId)
+      .in("campaign_id", affectedIds)
+      .in("status", ["processing", "scheduled"]);
+    const batchIds = [
+      ...new Set((affectedBatches ?? []).map((batch) => batch.batch_id)),
+    ];
+    if (batchIds.length) {
+      await supabase
+        .from("contact_batches")
+        .update({ status: "paused" })
+        .eq("user_id", userId)
+        .in("id", batchIds);
+    }
+    await supabase.from("campaign_activity").insert(
+      affectedIds.map((campaignId) => ({
+        user_id: userId,
+        campaign_id: campaignId,
+        event_type: "batch_paused_provider_limit",
+        metadata: { reason, message },
+      })),
+    );
+  }
 
   // Do not clear in-flight claims here. A Gmail request may have succeeded
   // immediately before another row hit a quota/auth error; releasing every
   // claim would allow that accepted message to be sent twice.
+}
+
+async function finalizeCampaignBatches(
+  supabase: AppSupabaseClient,
+  userId: string,
+  campaignBatchIds: Array<string | null>,
+) {
+  for (const campaignBatchId of [
+    ...new Set(campaignBatchIds.filter((id): id is string => Boolean(id))),
+  ]) {
+    const [{ data: link }, { count: remaining }, { count: sent }, { count: failed }] =
+      await Promise.all([
+        supabase
+          .from("campaign_batches")
+          .select("id, campaign_id, batch_id")
+          .eq("id", campaignBatchId)
+          .eq("user_id", userId)
+          .maybeSingle(),
+        supabase
+          .from("campaign_recipients")
+          .select("*", { count: "exact", head: true })
+          .eq("campaign_batch_id", campaignBatchId)
+          .eq("user_id", userId)
+          .in("status", ["pending", "queued", "sending"]),
+        supabase
+          .from("campaign_recipients")
+          .select("*", { count: "exact", head: true })
+          .eq("campaign_batch_id", campaignBatchId)
+          .eq("user_id", userId)
+          .eq("status", "sent"),
+        supabase
+          .from("campaign_recipients")
+          .select("*", { count: "exact", head: true })
+          .eq("campaign_batch_id", campaignBatchId)
+          .eq("user_id", userId)
+          .in("status", ["failed", "bounced"]),
+      ]);
+    if (!link || (remaining ?? 0) > 0) continue;
+
+    const status = (sent ?? 0) > 0 ? "completed" : "failed";
+    const now = new Date().toISOString();
+    await Promise.all([
+      supabase
+        .from("campaign_batches")
+        .update({ status, completed_at: now })
+        .eq("id", link.id)
+        .eq("user_id", userId)
+        .in("status", ["processing", "scheduled"]),
+      supabase
+        .from("contact_batches")
+        .update({ status })
+        .eq("id", link.batch_id)
+        .eq("user_id", userId),
+      supabase.from("campaign_activity").insert({
+        user_id: userId,
+        campaign_id: link.campaign_id,
+        campaign_batch_id: link.id,
+        event_type: status === "completed" ? "batch_completed" : "batch_failed",
+        metadata: { sent: sent ?? 0, failed: failed ?? 0 },
+      }),
+    ]);
+  }
 }
 
 async function finalizeFinishedSteps(
@@ -236,13 +336,28 @@ export async function processCampaignQueueBatch(
   );
 
   const nowIso = new Date().toISOString();
-  const { data: batch, error: batchError } = await supabase
+  const { data: runnableBatchRows } = await supabase
+    .from("campaign_batches")
+    .select("id")
+    .eq("campaign_id", campaign.id)
+    .eq("user_id", userId)
+    .or(`status.eq.processing,and(status.eq.scheduled,scheduled_at.lte.${nowIso})`);
+  const runnableBatchIds = (runnableBatchRows ?? []).map((row) => row.id);
+
+  let queueQuery = supabase
     .from("campaign_recipients")
     .select("*")
     .eq("campaign_id", campaign.id)
     .eq("user_id", userId)
     .in("status", ["pending", "queued"])
-    .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`);
+  queueQuery =
+    runnableBatchIds.length > 0
+      ? queueQuery.or(
+          `campaign_batch_id.is.null,campaign_batch_id.in.(${runnableBatchIds.join(",")})`,
+        )
+      : queueQuery.is("campaign_batch_id", null);
+  const { data: batch, error: batchError } = await queueQuery
     .order("created_at", { ascending: true })
     .limit(batchSize);
 
@@ -322,6 +437,16 @@ export async function processCampaignQueueBatch(
       .update({ status: "sending", completed_at: null, pause_reason: null })
       .eq("id", campaign.id)
       .eq("user_id", userId);
+  }
+
+  if (runnableBatchIds.length) {
+    await supabase
+      .from("campaign_batches")
+      .update({ status: "processing", started_at: new Date().toISOString() })
+      .eq("campaign_id", campaign.id)
+      .eq("user_id", userId)
+      .in("id", runnableBatchIds)
+      .eq("status", "scheduled");
   }
 
   const contactIds = batch.map((recipient) => recipient.contact_id);
@@ -724,6 +849,11 @@ export async function processCampaignQueueBatch(
     userId,
     campaign.id,
     batch.map((recipient) => recipient.campaign_step_id),
+  );
+  await finalizeCampaignBatches(
+    trusted,
+    userId,
+    batch.map((recipient) => recipient.campaign_batch_id),
   );
   const postSendAutomation = await materializeDueAutomatedRecipients(
     trusted,

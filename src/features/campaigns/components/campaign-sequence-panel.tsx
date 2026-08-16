@@ -16,7 +16,11 @@ import {
   setCampaignAutomationAction,
 } from "@/features/campaigns/actions";
 import { RichTextEditor } from "@/features/campaigns/components/rich-text-editor";
-import type { CampaignMember, CampaignStep } from "@/features/campaigns/queries";
+import type {
+  CampaignBatchOption,
+  CampaignMember,
+  CampaignStep,
+} from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { subjectForDisplay } from "@/features/campaigns/schemas";
 import { contactDisplayName } from "@/features/contacts/format";
@@ -28,6 +32,7 @@ type Props = {
   campaignTimezone: string;
   steps: CampaignStep[];
   members: CampaignMember[];
+  batches: CampaignBatchOption[];
 };
 
 const initialState: CampaignActionState = {};
@@ -39,6 +44,7 @@ export function CampaignSequencePanel({
   campaignTimezone,
   steps,
   members,
+  batches,
 }: Props) {
   const router = useRouter();
   const [stepType, setStepType] = useState<"manual_followup" | "automated_followup">(
@@ -48,8 +54,11 @@ export function CampaignSequencePanel({
   );
   const [sendMode, setSendMode] = useState<"immediate" | "scheduled">("immediate");
   const [scheduledLocal, setScheduledLocal] = useState("");
-  const [audience, setAudience] = useState<"all_eligible" | "not_replied" | "custom">(
-    "not_replied",
+  const [audience, setAudience] = useState<
+    "all_eligible" | "not_replied" | "custom" | "batches"
+  >("not_replied");
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(
+    new Set(),
   );
   const [state, formAction, pending] = useActionState(saveFollowupAction, initialState);
   const [message, setMessage] = useState<CampaignActionState | null>(null);
@@ -253,7 +262,6 @@ export function CampaignSequencePanel({
           <Label htmlFor="audience-mode">Audience</Label>
           <select
             id="audience-mode"
-            name="audienceMode"
             value={audience}
             onChange={(event) => setAudience(event.target.value as typeof audience)}
             className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
@@ -261,7 +269,13 @@ export function CampaignSequencePanel({
             <option value="all_eligible">All eligible enrolled contacts</option>
             <option value="not_replied">Enrolled contacts not marked replied</option>
             <option value="custom">Custom selection</option>
+            {batches.length ? <option value="batches">Specific batches</option> : null}
           </select>
+          <input
+            type="hidden"
+            name="audienceMode"
+            value={audience === "batches" ? "custom" : audience}
+          />
         </div>
         {audience === "custom" ? (
           <div className="max-h-52 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
@@ -271,6 +285,47 @@ export function CampaignSequencePanel({
                 <span>{contactDisplayName(member.firstName, member.lastName)}</span>
                 <span className="truncate text-slate-500">{member.email}</span>
               </label>
+            ))}
+          </div>
+        ) : null}
+        {audience === "batches" ? (
+          <div className="space-y-1 rounded-lg border border-slate-200 p-2">
+            {batches.map((batch) => (
+              <label
+                key={batch.id}
+                className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedBatchIds.has(batch.id)}
+                  onChange={() =>
+                    setSelectedBatchIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(batch.id)) next.delete(batch.id);
+                      else next.add(batch.id);
+                      return next;
+                    })
+                  }
+                />
+                <span className="font-medium text-slate-900">{batch.name}</span>
+                <span className="text-slate-500">
+                  {batch.totalContacts} contacts
+                </span>
+              </label>
+            ))}
+            {[
+              ...new Set(
+                batches
+                  .filter((batch) => selectedBatchIds.has(batch.id))
+                  .flatMap((batch) => batch.contactIds),
+              ),
+            ].map((contactId) => (
+              <input
+                key={contactId}
+                type="hidden"
+                name="contactIds"
+                value={contactId}
+              />
             ))}
           </div>
         ) : null}

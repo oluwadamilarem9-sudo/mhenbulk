@@ -33,6 +33,11 @@ type CampaignFormProps = {
   preselectedContactIds?: string[];
   finderScanId?: string | null;
   finderBatchId?: string | null;
+  availableBatches?: Array<{
+    id: string;
+    name: string;
+    total_contacts: number;
+  }>;
 };
 
 export function CampaignForm({
@@ -42,6 +47,7 @@ export function CampaignForm({
   preselectedContactIds = [],
   finderScanId = null,
   finderBatchId = null,
+  availableBatches = [],
 }: CampaignFormProps) {
   const fromFinder = Boolean(finderScanId ?? finderBatchId);
   const router = useRouter();
@@ -185,6 +191,34 @@ export function CampaignForm({
                 No eligible contacts yet. You can add or import them in the next step.
               </p>
             )}
+          </div>
+        </fieldset>
+      ) : null}
+
+      {!campaign && availableBatches.length > 0 ? (
+        <fieldset className="space-y-2">
+          <legend className="font-medium text-slate-900">Smart Batches</legend>
+          <p className="text-xs text-slate-500">
+            Choose organized batches to enroll their eligible contacts. Contact
+            records are reused, never duplicated.
+          </p>
+          <div className="grid max-h-56 gap-2 overflow-y-auto rounded-lg border border-slate-200 p-2 sm:grid-cols-2">
+            {availableBatches.map((batch) => (
+              <label
+                key={batch.id}
+                className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                <input type="checkbox" name="batchIds" value={batch.id} />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-slate-900">
+                    {batch.name}
+                  </span>
+                  <span className="block text-xs text-slate-500">
+                    {batch.total_contacts} contacts
+                  </span>
+                </span>
+              </label>
+            ))}
           </div>
         </fieldset>
       ) : null}

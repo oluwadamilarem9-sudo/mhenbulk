@@ -15,6 +15,7 @@ import {
   type CsvImportResult,
 } from "@/features/contacts/schemas";
 import { createClient } from "@/lib/supabase/server";
+import { parsePastedEmails } from "@/features/smart-batching/batching";
 
 const MAX_IMPORT_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_IMPORT_ROWS = 5000;
@@ -476,6 +477,12 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
   }
 
   const file = formData.get("file");
+  const requestedBatchSize = z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .safeParse(formData.get("batchSize"));
 
   if (!(file instanceof File)) {
     return { error: "Choose a CSV file to import." };
@@ -572,10 +579,18 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
     };
   }
 
-  const { count: beforeCount } = await supabase
-    .from("contacts")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", user.id);
+  const normalizedValidEmails = valid.map((row) => row.email.toLowerCase());
+  const existingEmails = new Set<string>();
+  for (let index = 0; index < normalizedValidEmails.length; index += 250) {
+    const { data: existing } = await supabase
+      .from("contacts")
+      .select("email_normalized")
+      .eq("user_id", user.id)
+      .in("email_normalized", normalizedValidEmails.slice(index, index + 250));
+    for (const contact of existing ?? []) {
+      existingEmails.add(contact.email_normalized);
+    }
+  }
 
   const CHUNK_SIZE = 500;
   for (let i = 0; i < valid.length; i += CHUNK_SIZE) {
@@ -584,6 +599,7 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
       void tags;
       return {
         ...contact,
+        source_type: "csv_import" as const,
         ...statusFlags(contact.status),
       };
     });
@@ -603,12 +619,10 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
     }
   }
 
-  const { count: afterCount } = await supabase
-    .from("contacts")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", user.id);
-
-  const imported = Math.max((afterCount ?? 0) - (beforeCount ?? 0), 0);
+  const importedEmails = normalizedValidEmails.filter(
+    (email) => !existingEmails.has(email),
+  );
+  const imported = importedEmails.length;
   const existingDuplicates = valid.length - imported;
 
   const rowsWithTags = valid.filter((row) => row.tags.length > 0);
@@ -666,6 +680,47 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
     }
   }
 
+  let batchResult: {
+    batch_ids?: string[];
+    batches_created?: number;
+    contacts_batched?: number;
+    batch_size?: number;
+  } = {};
+  let batchError: string | undefined;
+  if (importedEmails.length > 0) {
+    const savedByEmail = new Map<string, string>();
+    for (let index = 0; index < importedEmails.length; index += 250) {
+      const { data: saved } = await supabase
+        .from("contacts")
+        .select("id, email_normalized")
+        .eq("user_id", user.id)
+        .in("email_normalized", importedEmails.slice(index, index + 250));
+      for (const contact of saved ?? []) {
+        savedByEmail.set(contact.email_normalized, contact.id);
+      }
+    }
+    const orderedIds = importedEmails.flatMap((email) => {
+      const id = savedByEmail.get(email);
+      return id ? [id] : [];
+    });
+    if (orderedIds.length > 0) {
+      const { data, error } = await supabase.rpc("create_contact_batches", {
+        p_contact_ids: orderedIds,
+        p_batch_size: requestedBatchSize.success
+          ? requestedBatchSize.data
+          : null,
+        p_source: "import",
+        p_name_prefix: "Batch",
+      });
+      if (error) {
+        batchError =
+          "Contacts were imported, but batches could not be created. Apply migration 0008 or create batches from the selection.";
+      } else {
+        batchResult = (data ?? {}) as typeof batchResult;
+      }
+    }
+  }
+
   revalidatePath("/contacts");
   revalidatePath("/dashboard");
 
@@ -674,5 +729,123 @@ export async function importContactsCsvAction(formData: FormData): Promise<CsvIm
     duplicates: existingDuplicates + inFileDuplicates,
     invalid: invalidRows.length,
     invalidRows: invalidRows.slice(0, 10),
+    batchesCreated: batchResult.batches_created ?? 0,
+    contactsBatched: batchResult.contacts_batched ?? 0,
+    batchSize: batchResult.batch_size,
+    batchIds: batchResult.batch_ids,
+    batchError,
+  };
+}
+
+export async function importPastedContactsAction(
+  text: string,
+  batchSize: number,
+): Promise<CsvImportResult> {
+  const input = z.string().max(250_000).safeParse(text);
+  const size = z.coerce.number().int().min(1).max(1000).safeParse(batchSize);
+  if (!input.success || !size.success) {
+    return { error: "Paste contacts and choose a batch size from 1 to 1,000." };
+  }
+
+  const parsedEmails = parsePastedEmails(input.data);
+  if (parsedEmails.total === 0) {
+    return { error: "Paste at least one email address." };
+  }
+  if (parsedEmails.total > MAX_IMPORT_ROWS) {
+    return { error: `Paste imports are limited to ${MAX_IMPORT_ROWS} entries.` };
+  }
+  const valid = parsedEmails.emails;
+  if (!valid.length) {
+    return {
+      error: "No valid email addresses were found.",
+      invalid: parsedEmails.invalid,
+    };
+  }
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  const existing = new Set<string>();
+  for (let index = 0; index < valid.length; index += 250) {
+    const { data } = await supabase
+      .from("contacts")
+      .select("email_normalized")
+      .eq("user_id", user.id)
+      .in(
+        "email_normalized",
+        valid.slice(index, index + 250).map((email) => email.toLowerCase()),
+      );
+    for (const contact of data ?? []) existing.add(contact.email_normalized);
+  }
+
+  const newEmails = valid.filter((email) => !existing.has(email.toLowerCase()));
+  for (let index = 0; index < newEmails.length; index += 500) {
+    const { error } = await supabase.from("contacts").upsert(
+      newEmails.slice(index, index + 500).map((email) => ({
+        user_id: user.id,
+        first_name: "",
+        last_name: "",
+        email,
+        source_type: "manual" as const,
+        status: "active" as const,
+      })),
+      { onConflict: "user_id,email_normalized", ignoreDuplicates: true },
+    );
+    if (error) return { error: "Unable to save pasted contacts." };
+  }
+
+  const idsByEmail = new Map<string, string>();
+  for (let index = 0; index < newEmails.length; index += 250) {
+    const { data } = await supabase
+      .from("contacts")
+      .select("id, email_normalized")
+      .eq("user_id", user.id)
+      .in(
+        "email_normalized",
+        newEmails.slice(index, index + 250).map((email) => email.toLowerCase()),
+      );
+    for (const contact of data ?? []) {
+      idsByEmail.set(contact.email_normalized, contact.id);
+    }
+  }
+  const orderedIds = newEmails.flatMap((email) => {
+    const id = idsByEmail.get(email.toLowerCase());
+    return id ? [id] : [];
+  });
+
+  let batches: {
+    batch_ids?: string[];
+    batches_created?: number;
+    contacts_batched?: number;
+    batch_size?: number;
+  } = {};
+  let batchError: string | undefined;
+  if (orderedIds.length > 0) {
+    const { data, error } = await supabase.rpc("create_contact_batches", {
+      p_contact_ids: orderedIds,
+      p_batch_size: size.data,
+      p_source: "paste",
+      p_name_prefix: "Batch",
+    });
+    if (error) {
+      batchError =
+        "Contacts were imported, but batches could not be created. Apply migration 0008 or batch them from Contacts.";
+    } else {
+      batches = (data ?? {}) as typeof batches;
+    }
+  }
+
+  revalidatePath("/contacts");
+  revalidatePath("/dashboard");
+  return {
+    imported: newEmails.length,
+    duplicates:
+      parsedEmails.duplicates + valid.length - newEmails.length,
+    invalid: parsedEmails.invalid,
+    batchesCreated: batches.batches_created ?? 0,
+    contactsBatched: batches.contacts_batched ?? 0,
+    batchSize: batches.batch_size,
+    batchIds: batches.batch_ids,
+    batchError,
   };
 }

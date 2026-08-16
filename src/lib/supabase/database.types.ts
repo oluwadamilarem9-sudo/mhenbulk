@@ -92,6 +92,16 @@ export type EmailFinderTargetStatus =
 
 export type ContactSourceType = "manual" | "csv_import" | "email_finder";
 
+export type ContactBatchStatus =
+  | "draft"
+  | "ready"
+  | "scheduled"
+  | "processing"
+  | "completed"
+  | "paused"
+  | "cancelled"
+  | "failed";
+
 export type Database = {
   public: {
     Tables: {
@@ -101,6 +111,7 @@ export type Database = {
           email: string;
           full_name: string | null;
           company_name: string | null;
+          default_batch_size: number;
           created_at: string;
           updated_at: string;
         };
@@ -109,6 +120,7 @@ export type Database = {
           email: string;
           full_name?: string | null;
           company_name?: string | null;
+          default_batch_size?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -117,6 +129,7 @@ export type Database = {
           email?: string;
           full_name?: string | null;
           company_name?: string | null;
+          default_batch_size?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -353,12 +366,156 @@ export type Database = {
           },
         ];
       };
+      contact_batches: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          batch_number: number;
+          batch_size: number;
+          total_contacts: number;
+          status: ContactBatchStatus;
+          source: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          name: string;
+          batch_number: number;
+          batch_size: number;
+          total_contacts?: number;
+          status?: ContactBatchStatus;
+          source?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          name?: string;
+          batch_number?: number;
+          batch_size?: number;
+          total_contacts?: number;
+          status?: ContactBatchStatus;
+          source?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      contact_batch_members: {
+        Row: {
+          id: string;
+          user_id: string;
+          batch_id: string;
+          contact_id: string;
+          position: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          batch_id: string;
+          contact_id: string;
+          position: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          batch_id?: string;
+          contact_id?: string;
+          position?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "contact_batch_members_batch_id_fkey";
+            columns: ["batch_id"];
+            isOneToOne: false;
+            referencedRelation: "contact_batches";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "contact_batch_members_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_batches: {
+        Row: {
+          id: string;
+          user_id: string;
+          campaign_id: string;
+          batch_id: string;
+          status: ContactBatchStatus;
+          scheduled_at: string | null;
+          timezone: string;
+          provider_error: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          campaign_id: string;
+          batch_id: string;
+          status?: ContactBatchStatus;
+          scheduled_at?: string | null;
+          timezone?: string;
+          provider_error?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          campaign_id?: string;
+          batch_id?: string;
+          status?: ContactBatchStatus;
+          scheduled_at?: string | null;
+          timezone?: string;
+          provider_error?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_batches_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_batches_batch_id_fkey";
+            columns: ["batch_id"];
+            isOneToOne: false;
+            referencedRelation: "contact_batches";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       campaign_recipients: {
         Row: {
           id: string;
           campaign_id: string;
           campaign_step_id: string;
           contact_id: string;
+          email_account_id: string | null;
+          batch_id: string | null;
+          campaign_batch_id: string | null;
           user_id: string;
           email: string;
           to_email: string;
@@ -389,6 +546,9 @@ export type Database = {
           campaign_id: string;
           campaign_step_id: string;
           contact_id: string;
+          email_account_id?: string | null;
+          batch_id?: string | null;
+          campaign_batch_id?: string | null;
           user_id: string;
           email: string;
           to_email: string;
@@ -419,6 +579,9 @@ export type Database = {
           campaign_id?: string;
           campaign_step_id?: string;
           contact_id?: string;
+          email_account_id?: string | null;
+          batch_id?: string | null;
+          campaign_batch_id?: string | null;
           user_id?: string;
           email?: string;
           to_email?: string;
@@ -445,6 +608,27 @@ export type Database = {
           updated_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "campaign_recipients_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_recipients_batch_id_fkey";
+            columns: ["batch_id"];
+            isOneToOne: false;
+            referencedRelation: "contact_batches";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_recipients_campaign_batch_id_fkey";
+            columns: ["campaign_batch_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_batches";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "campaign_recipients_campaign_id_fkey";
             columns: ["campaign_id"];
@@ -686,6 +870,7 @@ export type Database = {
           campaign_step_id: string | null;
           campaign_contact_id: string | null;
           campaign_recipient_id: string | null;
+          campaign_batch_id: string | null;
           contact_id: string | null;
           event_type: string;
           metadata: Json;
@@ -699,6 +884,7 @@ export type Database = {
           campaign_step_id?: string | null;
           campaign_contact_id?: string | null;
           campaign_recipient_id?: string | null;
+          campaign_batch_id?: string | null;
           contact_id?: string | null;
           event_type: string;
           metadata?: Json;
@@ -712,6 +898,7 @@ export type Database = {
           campaign_step_id?: string | null;
           campaign_contact_id?: string | null;
           campaign_recipient_id?: string | null;
+          campaign_batch_id?: string | null;
           contact_id?: string | null;
           event_type?: string;
           metadata?: Json;
@@ -719,6 +906,13 @@ export type Database = {
           created_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "campaign_activity_campaign_batch_id_fkey";
+            columns: ["campaign_batch_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_batches";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "campaign_activity_campaign_id_fkey";
             columns: ["campaign_id"];
@@ -1143,7 +1337,34 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      create_contact_batches: {
+        Args: {
+          p_contact_ids: string[];
+          p_batch_size?: number | null;
+          p_source?: string;
+          p_name_prefix?: string;
+        };
+        Returns: Json;
+      };
+      enroll_contact_batches: {
+        Args: {
+          p_campaign_id: string;
+          p_batch_ids: string[];
+        };
+        Returns: Json;
+      };
+      queue_campaign_batch: {
+        Args: {
+          p_campaign_id: string;
+          p_batch_id: string;
+          p_scheduled_at?: string | null;
+          p_timezone?: string;
+          p_max_attempts?: number;
+        };
+        Returns: Json;
+      };
+    };
     Enums: {
       campaign_status: CampaignStatus;
       recipient_status: RecipientStatus;
@@ -1160,6 +1381,7 @@ export type Database = {
       email_finder_confidence: EmailFinderConfidence;
       email_finder_batch_status: EmailFinderBatchStatus;
       email_finder_target_status: EmailFinderTargetStatus;
+      contact_batch_status: ContactBatchStatus;
     };
     CompositeTypes: Record<string, never>;
   };

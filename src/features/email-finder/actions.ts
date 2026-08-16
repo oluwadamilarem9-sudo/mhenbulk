@@ -115,6 +115,7 @@ type SaveOutcome = {
   created: number;
   existing: number;
   contactIdsByEmail: Map<string, string>;
+  createdContactIds: string[];
   error?: string;
 };
 
@@ -135,6 +136,7 @@ async function saveResultsAsContacts(
       created: 0,
       existing: 0,
       contactIdsByEmail: new Map(),
+      createdContactIds: [],
       error: "No matching scan results were found.",
     };
   }
@@ -181,6 +183,7 @@ async function saveResultsAsContacts(
         created: 0,
         existing,
         contactIdsByEmail,
+        createdContactIds: [],
         error: "Unable to save one or more contacts.",
       };
     }
@@ -217,7 +220,29 @@ async function saveResultsAsContacts(
     created: contactIdsByEmail.size - existing,
     existing,
     contactIdsByEmail,
+    createdContactIds: missing.flatMap((email) => {
+      const id = contactIdsByEmail.get(email);
+      return id ? [id] : [];
+    }),
   };
+}
+
+async function createFinderBatches(
+  supabase: AppSupabaseClient,
+  contactIds: string[],
+) {
+  if (!contactIds.length) return null;
+  const { data } = await supabase.rpc("create_contact_batches", {
+    p_contact_ids: contactIds,
+    p_batch_size: null,
+    p_source: "email_finder",
+    p_name_prefix: "Batch",
+  });
+  return (data ?? null) as {
+    batch_ids?: string[];
+    batches_created?: number;
+    contacts_batched?: number;
+  } | null;
 }
 
 async function eligibleContactIds(
@@ -293,10 +318,27 @@ async function addToContacts(
 
   const outcome = await saveResultsAsContacts(supabase, user.id, scope, resultIds);
   if (outcome.error) return { error: outcome.error };
+  const batches = await createFinderBatches(
+    supabase,
+    outcome.createdContactIds,
+  );
 
   revalidatePath("/email-finder");
   revalidatePath("/contacts");
-  return summarize(outcome);
+  const summary = summarize(outcome);
+  return {
+    ...summary,
+    success: `${summary.success}${
+      batches?.batches_created
+        ? ` Created ${batches.batches_created} Smart Batch${
+            batches.batches_created === 1 ? "" : "es"
+          }.`
+        : ""
+    }`,
+    batchesCreated: batches?.batches_created,
+    contactsBatched: batches?.contacts_batched,
+    batchIds: batches?.batch_ids,
+  };
 }
 
 async function addToCampaign(
@@ -315,6 +357,10 @@ async function addToCampaign(
 
   const outcome = await saveResultsAsContacts(supabase, user.id, scope, resultIds);
   if (outcome.error) return { error: outcome.error };
+  const batches = await createFinderBatches(
+    supabase,
+    outcome.createdContactIds,
+  );
 
   const { eligible } = await eligibleContactIds(supabase, user.id, [
     ...new Set(outcome.contactIdsByEmail.values()),
@@ -326,6 +372,12 @@ async function addToCampaign(
 
   const enrolled = await enrollCampaignContactsAction(campaign.data, eligible);
   if (enrolled.error) return { error: enrolled.error };
+  if (batches?.batch_ids?.length) {
+    await supabase.rpc("enroll_contact_batches", {
+      p_campaign_id: campaign.data,
+      p_batch_ids: batches.batch_ids,
+    });
+  }
 
   revalidatePath("/email-finder");
   revalidatePath(`/campaigns/${campaign.data}`);
@@ -335,6 +387,9 @@ async function addToCampaign(
     existing: outcome.existing,
     enrolled: eligible.length,
     campaignId: campaign.data,
+    batchesCreated: batches?.batches_created,
+    contactsBatched: batches?.contacts_batched,
+    batchIds: batches?.batch_ids,
   };
 }
 
@@ -350,6 +405,10 @@ async function prepareForNewCampaign(
 
   const outcome = await saveResultsAsContacts(supabase, user.id, scope, resultIds);
   if (outcome.error) return { error: outcome.error };
+  const batches = await createFinderBatches(
+    supabase,
+    outcome.createdContactIds,
+  );
 
   const { eligible, ineligible } = await eligibleContactIds(supabase, user.id, [
     ...new Set(outcome.contactIdsByEmail.values()),
@@ -368,6 +427,9 @@ async function prepareForNewCampaign(
     existing: outcome.existing,
     contactIds: eligible,
     ineligible,
+    batchesCreated: batches?.batches_created,
+    contactsBatched: batches?.contacts_batched,
+    batchIds: batches?.batch_ids,
   };
 }
 

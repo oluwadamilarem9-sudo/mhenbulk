@@ -66,6 +66,7 @@ export async function materializeDueAutomatedRecipients(
     { data: contacts },
     { data: recipientState },
     { data: suppressionRows },
+    { data: pausedBatchRows },
   ] = await Promise.all([
     supabase
       .from("contacts")
@@ -83,6 +84,12 @@ export async function materializeDueAutomatedRecipients(
       .from("suppression_list")
       .select("email_normalized")
       .eq("user_id", userId),
+    supabase
+      .from("campaign_batches")
+      .select("id")
+      .eq("campaign_id", campaign.id)
+      .eq("user_id", userId)
+      .eq("status", "paused"),
   ]);
 
   const contactMap = new Map((contacts ?? []).map((contact) => [contact.id, contact]));
@@ -96,6 +103,9 @@ export async function materializeDueAutomatedRecipients(
   );
   const suppressedEmails = new Set(
     (suppressionRows ?? []).map((row) => row.email_normalized),
+  );
+  const pausedCampaignBatchIds = new Set(
+    (pausedBatchRows ?? []).map((batch) => batch.id),
   );
   const { maxRetries } = getQueueConfig();
   let created = 0;
@@ -116,7 +126,7 @@ export async function materializeDueAutomatedRecipients(
         supabase
           .from("campaign_recipients")
           .select(
-            "contact_id, sent_at, provider_thread_id, sequence_stopped_at, replied_at",
+            "contact_id, batch_id, campaign_batch_id, sent_at, provider_thread_id, sequence_stopped_at, replied_at",
           )
           .eq("campaign_step_id", previous.id)
           .eq("user_id", userId)
@@ -145,6 +155,13 @@ export async function materializeDueAutomatedRecipients(
 
     for (const previousRecipient of previousRecipients ?? []) {
       if (existing.has(previousRecipient.contact_id)) continue;
+      if (
+        previousRecipient.campaign_batch_id &&
+        pausedCampaignBatchIds.has(previousRecipient.campaign_batch_id)
+      ) {
+        waitingForDelay = true;
+        continue;
+      }
       if (
         step.stop_on_reply &&
         repliedContacts.has(previousRecipient.contact_id)
@@ -184,6 +201,9 @@ export async function materializeDueAutomatedRecipients(
         campaign_id: campaign.id,
         campaign_step_id: step.id,
         contact_id: contact.id,
+        email_account_id: campaign.email_account_id,
+        batch_id: previousRecipient.batch_id,
+        campaign_batch_id: previousRecipient.campaign_batch_id,
         user_id: userId,
         email: contact.email,
         to_email: contact.email,
@@ -205,6 +225,38 @@ export async function materializeDueAutomatedRecipients(
         })
         .select("id");
       created += inserted?.length ?? 0;
+      const campaignBatchIds = [
+        ...new Set(
+          rows
+            .map((row) => row.campaign_batch_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      if (campaignBatchIds.length) {
+        await supabase
+          .from("campaign_batches")
+          .update({
+            status: "processing",
+            started_at: new Date().toISOString(),
+            completed_at: null,
+          })
+          .eq("user_id", userId)
+          .in("id", campaignBatchIds);
+        const batchIds = [
+          ...new Set(
+            rows
+              .map((row) => row.batch_id)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ];
+        if (batchIds.length) {
+          await supabase
+            .from("contact_batches")
+            .update({ status: "processing" })
+            .eq("user_id", userId)
+            .in("id", batchIds);
+        }
+      }
 
       await supabase
         .from("campaign_steps")

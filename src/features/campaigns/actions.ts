@@ -186,9 +186,10 @@ export async function createCampaignAction(
     data.id,
     "campaign_created",
   );
+  // Align with Email Finder selection (2k) and workspace enrollment (5k).
   const selectedIds = z
     .array(uuidSchema)
-    .max(500)
+    .max(5000)
     .safeParse(formData.getAll("contactIds"));
   if (selectedIds.success && selectedIds.data.length > 0) {
     const ownedContacts: { id: string }[] = [];
@@ -220,6 +221,37 @@ export async function createCampaignAction(
         { count: ownedContacts.length, source: "campaign_builder" },
       );
     }
+  }
+  const selectedBatchIds = z
+    .array(uuidSchema)
+    .max(200)
+    .safeParse(formData.getAll("batchIds"));
+  if (selectedBatchIds.success && selectedBatchIds.data.length > 0) {
+    const { data: enrolled, error: batchError } = await supabase.rpc(
+      "enroll_contact_batches",
+      {
+        p_campaign_id: data.id,
+        p_batch_ids: [...new Set(selectedBatchIds.data)],
+      },
+    );
+    if (batchError) {
+      return {
+        error:
+          "Campaign created, but its Smart Batches could not be enrolled. Open Recipients and retry.",
+        campaignId: data.id,
+      };
+    }
+    const batchResult = (enrolled ?? {}) as { contacts_enrolled?: number };
+    await writeCampaignActivity(
+      supabase,
+      user.id,
+      data.id,
+      "contacts_added",
+      {
+        count: batchResult.contacts_enrolled ?? 0,
+        source: "smart_batches",
+      },
+    );
   }
 
   revalidatePath("/campaigns");
@@ -623,6 +655,7 @@ export async function startCampaignAction(
   const recipients = eligible.map((contact) => ({
     campaign_id: campaign.id,
     contact_id: contact.id,
+    email_account_id: sender.id,
     user_id: user.id,
     email: contact.email,
     to_email: contact.email,
@@ -978,6 +1011,12 @@ export async function importAndEnrollCampaignContactsAction(
   formData: FormData,
 ): Promise<CampaignActionState> {
   const campaignId = uuidSchema.safeParse(formData.get("campaignId"));
+  const requestedBatchSize = z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .safeParse(formData.get("batchSize"));
   const file = formData.get("file");
   if (!campaignId.success || !(file instanceof File) || file.size === 0) {
     return { error: "Choose a CSV, TXT, or TSV contact file." };
@@ -1041,7 +1080,45 @@ export async function importAndEnrollCampaignContactsAction(
     savedIds.push(...(saved ?? []).map((contact) => contact.id));
   }
   if (!savedIds.length) return { error: "Imported contacts are not eligible for enrollment." };
-  return enrollCampaignContactsAction(campaign.id, savedIds);
+  const { data: batchData, error: batchError } = await supabase.rpc(
+    "create_contact_batches",
+    {
+      p_contact_ids: [...new Set(savedIds)],
+      p_batch_size: requestedBatchSize.success
+        ? requestedBatchSize.data
+        : null,
+      p_source: "campaign_import",
+      p_name_prefix: "Batch",
+    },
+  );
+  if (batchError) {
+    return {
+      error:
+        "Contacts were imported, but Smart Batches could not be created. Apply migration 0008 and retry.",
+    };
+  }
+  const created = (batchData ?? {}) as {
+    batch_ids?: string[];
+    batches_created?: number;
+    contacts_batched?: number;
+  };
+  if (!created.batch_ids?.length) {
+    return { error: "No eligible contacts were available for batching." };
+  }
+  const { error: enrollError } = await supabase.rpc("enroll_contact_batches", {
+    p_campaign_id: campaign.id,
+    p_batch_ids: created.batch_ids,
+  });
+  if (enrollError) {
+    return { error: "Batches were created, but could not be linked to this campaign." };
+  }
+  revalidatePath(`/campaigns/${campaign.id}`);
+  revalidatePath("/contacts");
+  return {
+    success: `${created.contacts_batched ?? savedIds.length} contacts imported into ${
+      created.batches_created ?? created.batch_ids.length
+    } Smart Batches.`,
+  };
 }
 
 export async function removeCampaignContactAction(
@@ -1278,12 +1355,38 @@ export async function saveFollowupAction(
     }
     const { maxRetries } = getQueueConfig();
     const queueTime = scheduledAt?.toISOString() ?? new Date().toISOString();
+    const selectedContactIds = selected.map(
+      (membership) => membership.contact_id,
+    );
+    const { data: previousBatchRows } = await supabase
+      .from("campaign_recipients")
+      .select("contact_id, batch_id, campaign_batch_id, created_at")
+      .eq("campaign_id", campaign.id)
+      .eq("user_id", user.id)
+      .in("contact_id", selectedContactIds)
+      .order("created_at", { ascending: false });
+    const previousBatchByContact = new Map<
+      string,
+      { batchId: string | null; campaignBatchId: string | null }
+    >();
+    for (const row of previousBatchRows ?? []) {
+      if (!previousBatchByContact.has(row.contact_id)) {
+        previousBatchByContact.set(row.contact_id, {
+          batchId: row.batch_id,
+          campaignBatchId: row.campaign_batch_id,
+        });
+      }
+    }
     const recipients = selected.map((membership) => {
       const contact = Array.isArray(membership.contacts) ? membership.contacts[0] : membership.contacts;
+      const previousBatch = previousBatchByContact.get(membership.contact_id);
       return {
         campaign_id: campaign.id,
         campaign_step_id: step.id,
         contact_id: membership.contact_id,
+        email_account_id: campaign.email_account_id,
+        batch_id: previousBatch?.batchId ?? null,
+        campaign_batch_id: previousBatch?.campaignBatchId ?? null,
         user_id: user.id,
         email: contact!.email,
         to_email: contact!.email,
@@ -1304,6 +1407,44 @@ export async function saveFollowupAction(
         .eq("id", step.id)
         .eq("user_id", user.id);
       return { error: "The follow-up could not be queued. Please try again." };
+    }
+    const followupCampaignBatchIds = [
+      ...new Set(
+        recipients
+          .map((recipient) => recipient.campaign_batch_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (followupCampaignBatchIds.length) {
+      await supabase
+        .from("campaign_batches")
+        .update({
+          status:
+            parsed.data.sendMode === "scheduled" ? "scheduled" : "processing",
+          scheduled_at: scheduledAt?.toISOString() ?? null,
+          timezone: parsed.data.timezone,
+          completed_at: null,
+          provider_error: null,
+        })
+        .eq("user_id", user.id)
+        .in("id", followupCampaignBatchIds);
+      const followupBatchIds = [
+        ...new Set(
+          recipients
+            .map((recipient) => recipient.batch_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      if (followupBatchIds.length) {
+        await supabase
+          .from("contact_batches")
+          .update({
+            status:
+              parsed.data.sendMode === "scheduled" ? "scheduled" : "processing",
+          })
+          .eq("user_id", user.id)
+          .in("id", followupBatchIds);
+      }
     }
     await supabase
       .from("campaigns")
