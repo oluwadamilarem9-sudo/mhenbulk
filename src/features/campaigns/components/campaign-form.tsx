@@ -32,6 +32,7 @@ type CampaignFormProps = {
   }>;
   preselectedContactIds?: string[];
   finderScanId?: string | null;
+  finderBatchId?: string | null;
 };
 
 export function CampaignForm({
@@ -40,7 +41,9 @@ export function CampaignForm({
   availableContacts = [],
   preselectedContactIds = [],
   finderScanId = null,
+  finderBatchId = null,
 }: CampaignFormProps) {
+  const fromFinder = Boolean(finderScanId ?? finderBatchId);
   const router = useRouter();
   const action = campaign ? updateCampaignAction : createCampaignAction;
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -143,12 +146,15 @@ export function CampaignForm({
             Initial recipients <span className="font-normal text-slate-400">(optional)</span>
           </legend>
           <p className="text-xs text-slate-500">
-            {finderScanId
+            {fromFinder
               ? "Contacts from Email Finder are pre-selected below. You can adjust the list before creating the campaign."
               : "Choose existing eligible contacts now, or add/import recipients after creating the campaign."}
           </p>
           {finderScanId ? (
             <input type="hidden" name="finderScanId" value={finderScanId} />
+          ) : null}
+          {finderBatchId ? (
+            <input type="hidden" name="finderBatchId" value={finderBatchId} />
           ) : null}
           <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
             {availableContacts.length ? (

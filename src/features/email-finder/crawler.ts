@@ -1,4 +1,7 @@
-import { getEmailFinderConfig } from "@/features/email-finder/config";
+import {
+  getEmailFinderConfig,
+  type EmailFinderConfig,
+} from "@/features/email-finder/config";
 import {
   dedupeEmails,
   extractEmailsAndLinks,
@@ -115,8 +118,9 @@ async function loadRobots(
 
 export async function crawlWebsiteForEmails(
   rawUrl: string,
+  overrides?: Partial<EmailFinderConfig>,
 ): Promise<{ ok: true; data: CrawlResult } | { ok: false; error: CrawlFailure }> {
-  const config = getEmailFinderConfig();
+  const config = { ...getEmailFinderConfig(), ...overrides };
   const startedAt = Date.now();
 
   try {

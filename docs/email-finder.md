@@ -1,12 +1,40 @@
 # Email Finder setup
 
-## Apply the database migration
+## Apply the database migrations
 
-The Cursor Supabase MCP may be connected to a different project. Apply this migration on the **Mhenbulk** project (`stcucgdgbtcuimqsbwtk`):
+The Cursor Supabase MCP may be connected to a different project. Apply these migrations on the **Mhenbulk** project (`stcucgdgbtcuimqsbwtk`):
 
 1. Open the Supabase SQL Editor for the Mhenbulk project.
 2. Paste and run [`supabase/migrations/0005_email_finder.sql`](../supabase/migrations/0005_email_finder.sql).
-3. Confirm tables `email_finder_scans` and `email_finder_results` exist, and that `contacts` has `source_type`, `source_url`, `source_result_id`, and `discovered_at`.
+   Confirm tables `email_finder_scans` and `email_finder_results` exist, and that `contacts` has `source_type`, `source_url`, `source_result_id`, and `discovered_at`.
+3. Paste and run [`supabase/migrations/0006_email_finder_batches.sql`](../supabase/migrations/0006_email_finder_batches.sql).
+   Confirm tables `email_finder_batches` and `email_finder_batch_targets` exist, and that `email_finder_scans` and `email_finder_results` both have a `batch_id` column.
+
+## Bulk website scanning
+
+Uploading a list of websites creates a batch of queued targets. Two things drain that queue:
+
+- **The open page.** While the Email Finder page is open it repeatedly calls `POST /api/email-finder/batches/{id}/run`, which scans a few sites per call and reports progress.
+- **The background worker.** `GET|POST /api/cron/process-email-finder-queue` does the same work for every active batch, so scanning continues after the page is closed.
+
+Targets are claimed with a conditional update, so the page and the cron worker never scan the same website twice. A crashed run is recovered automatically once its claim goes stale.
+
+### Schedule the background worker
+
+The endpoint requires the same `CRON_SECRET` bearer token as the email queue. Vercel Cron is registered daily in `vercel.json`; for faster progress schedule it every minute or two with Supabase Cron (see [`supabase-cron-email-queue.md`](./supabase-cron-email-queue.md) and swap the path):
+
+```sql
+select cron.schedule(
+  'process-email-finder-queue',
+  '* * * * *',
+  $$
+  select net.http_post(
+    url := 'https://mhenbulk.vercel.app/api/cron/process-email-finder-queue',
+    headers := jsonb_build_object('Authorization', 'Bearer ' || current_setting('app.cron_secret'))
+  );
+  $$
+);
+```
 
 ## Environment variables (optional)
 
@@ -17,11 +45,20 @@ EMAIL_FINDER_MAX_SCANS_PER_HOUR=20
 EMAIL_FINDER_MAX_PAGES_PER_SCAN=10
 EMAIL_FINDER_REQUEST_TIMEOUT=8000
 EMAIL_FINDER_MAX_RESPONSE_SIZE=1000000
+
+EMAIL_FINDER_BATCH_PAGES_PER_SITE=4
+EMAIL_FINDER_BATCH_SITE_BUDGET_MS=14000
+EMAIL_FINDER_BATCH_SITE_CONCURRENCY=3
+EMAIL_FINDER_BATCH_TARGETS_PER_RUN=30
+EMAIL_FINDER_BATCH_MAX_ATTEMPTS=2
 ```
+
+Queued batch scans do not count toward `EMAIL_FINDER_MAX_SCANS_PER_HOUR`; that limit only applies to single-URL searches.
 
 ## Safety notes
 
-- Only public HTML is fetched.
+- Only public HTML is fetched, for single searches and bulk lists alike.
 - Private / localhost / metadata addresses are blocked, including redirect targets.
+- `robots.txt` is honoured per site.
 - Emails are extracted only when present in page content or `mailto:` links.
-- No paid email-finder APIs are used.
+- No paid email-finder APIs are used, and no addresses are guessed.

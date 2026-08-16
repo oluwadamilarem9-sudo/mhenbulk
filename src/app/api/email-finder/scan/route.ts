@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getEmailFinderConfig } from "@/features/email-finder/config";
 import { crawlWebsiteForEmails } from "@/features/email-finder/crawler";
+import {
+  persistCompletedScan,
+  persistFailedScan,
+} from "@/features/email-finder/persist";
 import { countRecentScans } from "@/features/email-finder/queries";
 import {
   USER_FACING_SCAN_ERRORS,
@@ -70,117 +74,71 @@ export async function POST(request: Request) {
     const code = error instanceof SafeUrlError ? error.code : "invalid_url";
     const message =
       USER_FACING_SCAN_ERRORS[code] ?? USER_FACING_SCAN_ERRORS.invalid_url;
-    const completedAt = new Date().toISOString();
-    const { data: failedScan } = await supabase
-      .from("email_finder_scans")
-      .insert({
-        user_id: user.id,
-        target_url: parsed.data.url.trim(),
-        domain: validatedDomain,
-        status: "failed",
-        pages_scanned: 0,
-        emails_found: 0,
-        error_code: code,
-        error_message: message,
-        completed_at: completedAt,
-      })
-      .select("id")
-      .single();
+    const failedScanId = await persistFailedScan(supabase, {
+      userId: user.id,
+      targetUrl: parsed.data.url.trim(),
+      domain: validatedDomain,
+      code,
+      message,
+    });
 
     return NextResponse.json(
       {
         error: message,
         code,
-        scanId: failedScan?.id ?? null,
+        scanId: failedScanId,
       },
       { status: 422 },
     );
   }
 
   const crawl = await crawlWebsiteForEmails(validatedHref);
-  const completedAt = new Date().toISOString();
 
   if (!crawl.ok) {
-    const { data: failedScan } = await supabase
-      .from("email_finder_scans")
-      .insert({
-        user_id: user.id,
-        target_url: validatedHref,
-        domain: validatedDomain,
-        status: "failed",
-        pages_scanned: 0,
-        emails_found: 0,
-        error_code: crawl.error.code,
-        error_message: crawl.error.message,
-        completed_at: completedAt,
-      })
-      .select("id")
-      .single();
+    const failedScanId = await persistFailedScan(supabase, {
+      userId: user.id,
+      targetUrl: validatedHref,
+      domain: validatedDomain,
+      code: crawl.error.code,
+      message: crawl.error.message,
+    });
 
     return NextResponse.json(
       {
         error: crawl.error.message,
         code: crawl.error.code,
-        scanId: failedScan?.id ?? null,
+        scanId: failedScanId,
       },
       { status: 422 },
     );
   }
 
-  const { data: scan, error: scanError } = await supabase
-    .from("email_finder_scans")
-    .insert({
-      user_id: user.id,
-      target_url: crawl.data.targetUrl,
-      domain: crawl.data.domain,
-      status: crawl.data.status,
-      pages_scanned: crawl.data.pagesScanned,
-      emails_found: crawl.data.emails.length,
-      limit_reached: crawl.data.limitReached,
-      javascript_hint: crawl.data.javascriptHint,
-      error_message: crawl.data.warning ?? null,
-      completed_at: completedAt,
-    })
-    .select(
-      "id, target_url, domain, status, pages_scanned, emails_found, limit_reached, javascript_hint, error_message, created_at, completed_at",
-    )
-    .single();
+  const persisted = await persistCompletedScan(supabase, {
+    userId: user.id,
+    crawl: crawl.data,
+  });
 
-  if (scanError || !scan) {
-    console.info("[email-finder] Failed to persist scan", {
-      message: scanError?.message,
-    });
+  if (!persisted) {
     return NextResponse.json(
       { error: USER_FACING_SCAN_ERRORS.scan_failed, code: "scan_failed" },
       { status: 500 },
     );
   }
 
-  if (crawl.data.emails.length) {
-    const rows = crawl.data.emails.map((item) => ({
-      user_id: user.id,
-      scan_id: scan.id,
-      email: item.email,
-      source_url: item.sourceUrl,
-      category: item.category,
-      selected: false,
-    }));
+  const { data: scan } = await supabase
+    .from("email_finder_scans")
+    .select(
+      "id, target_url, domain, status, pages_scanned, emails_found, limit_reached, javascript_hint, error_message, created_at, completed_at",
+    )
+    .eq("id", persisted.scanId)
+    .eq("user_id", user.id)
+    .single();
 
-    for (let index = 0; index < rows.length; index += 200) {
-      const { error: insertError } = await supabase
-        .from("email_finder_results")
-        .insert(rows.slice(index, index + 200));
-      if (insertError) {
-        console.info("[email-finder] Failed to persist results", {
-          scanId: scan.id,
-          message: insertError.message,
-        });
-        return NextResponse.json(
-          { error: USER_FACING_SCAN_ERRORS.scan_failed, code: "scan_failed" },
-          { status: 500 },
-        );
-      }
-    }
+  if (!scan) {
+    return NextResponse.json(
+      { error: USER_FACING_SCAN_ERRORS.scan_failed, code: "scan_failed" },
+      { status: 500 },
+    );
   }
 
   const { data: results } = await supabase

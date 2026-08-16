@@ -3,7 +3,13 @@
  * Handles CSV and TSV without adding a dependency.
  */
 
-export function parseDelimited(text: string, delimiter = ","): string[][] {
+/** Spreadsheets often prefix exported files with a UTF-8 byte order mark. */
+export function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+export function parseDelimited(input: string, delimiter = ","): string[][] {
+  const text = stripBom(input);
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -57,6 +63,7 @@ export function parseDelimited(text: string, delimiter = ","): string[][] {
 type ContactFileField =
   | "first_name"
   | "last_name"
+  | "full_name"
   | "email"
   | "company"
   | "phone"
@@ -75,9 +82,20 @@ const HEADER_ALIASES: Record<string, ContactFileField> = {
   surname: "last_name",
   family_name: "last_name",
   "family name": "last_name",
+  name: "full_name",
+  fullname: "full_name",
+  full_name: "full_name",
+  "full name": "full_name",
+  "contact name": "full_name",
   email: "email",
   "email address": "email",
   email_address: "email",
+  emailaddress: "email",
+  "e-mail": "email",
+  "e-mail address": "email",
+  mail: "email",
+  "work email": "email",
+  "business email": "email",
   company: "company",
   organization: "company",
   organisation: "company",
@@ -90,6 +108,17 @@ const HEADER_ALIASES: Record<string, ContactFileField> = {
   notes: "notes",
   note: "notes",
 };
+
+const EMAIL_IN_TEXT = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+
+/** Pulls the address out of values like `John Smith <john@example.com>`. */
+function extractEmail(value: string): string {
+  return EMAIL_IN_TEXT.exec(value.trim())?.[0] ?? "";
+}
+
+function looksLikeEmail(value: string): boolean {
+  return extractEmail(value) !== "";
+}
 
 export type ParsedContactRow = {
   first_name: string;
@@ -120,10 +149,13 @@ function emptyRow(line: number): ParsedContactRow {
   };
 }
 
-function parsePlainEmailList(text: string): ParsedContactsFile {
-  const rows = text
+function parsePlainEmailList(input: string): ParsedContactsFile {
+  const rows = stripBom(input)
     .split(/\r?\n/)
-    .map((value, index) => ({ ...emptyRow(index + 1), email: value.trim() }))
+    .map((value, index) => ({
+      ...emptyRow(index + 1),
+      email: extractEmail(value) || value.trim(),
+    }))
     .filter((row) => row.email !== "" && row.email.toLowerCase() !== "email");
 
   return rows.length > 0
@@ -131,11 +163,61 @@ function parsePlainEmailList(text: string): ParsedContactsFile {
     : { rows: [], error: "The selected file is empty." };
 }
 
+/** Splits a single name column so the last word becomes the last name. */
+function applyFullName(record: ParsedContactRow, value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return;
+  if (parts.length === 1) {
+    record.first_name = parts[0];
+    return;
+  }
+  record.last_name = parts[parts.length - 1];
+  record.first_name = parts.slice(0, -1).join(" ");
+}
+
+function assignField(
+  record: ParsedContactRow,
+  field: ContactFileField,
+  value: string,
+) {
+  const trimmed = value.trim();
+  if (field === "full_name") {
+    applyFullName(record, trimmed);
+    return;
+  }
+  if (field === "email") {
+    record.email = extractEmail(trimmed) || trimmed;
+    return;
+  }
+  record[field] = trimmed;
+}
+
+/** Finds the column that holds email addresses when no header names it. */
+function detectEmailColumn(rows: string[][]): number {
+  const counts = new Map<number, number>();
+  for (const row of rows) {
+    row.forEach((value, index) => {
+      if (looksLikeEmail(value)) {
+        counts.set(index, (counts.get(index) ?? 0) + 1);
+      }
+    });
+  }
+
+  let bestIndex = -1;
+  let bestCount = 0;
+  for (const [index, count] of counts) {
+    if (count > bestCount) {
+      bestIndex = index;
+      bestCount = count;
+    }
+  }
+  return bestIndex;
+}
+
 /**
- * Accepted formats:
- * - .txt: one email per line (no header required)
- * - .csv/.tsv: an email column, with optional first_name and last_name columns
- * - headerless single-column CSV/TSV: one email per row
+ * A header row is never required. Named columns are used when present, and
+ * otherwise the email column is detected from the data itself. Names, company,
+ * phone, tags, and notes are always optional.
  */
 export function parseContactsFile(text: string, fileName: string): ParsedContactsFile {
   const extension = fileName.toLowerCase().split(".").pop();
@@ -162,34 +244,35 @@ export function parseContactsFile(text: string, fileName: string): ParsedContact
   });
 
   const mappedFields = new Set(columnMap.values());
+  // A first row containing an address is data, not a header.
+  let firstDataRow = parsed[0].some(looksLikeEmail) ? 0 : 1;
 
   if (!mappedFields.has("email")) {
-    // A headerless single-column file is treated as one email per row.
-    if (parsed.every((row) => row.length === 1)) {
+    const detected = detectEmailColumn(parsed);
+    if (detected < 0) {
       return {
-        rows: parsed.map((row, index) => ({
-          ...emptyRow(index + 1),
-          email: row[0].trim(),
-        })),
+        rows: [],
+        error:
+          "We couldn't find any email addresses in this file. Add one email per line, or a column containing email addresses.",
       };
     }
 
-    return {
-      rows: [],
-      error:
-        "The file must include an 'email' column. Name, company, phone, tags, and notes columns are optional.",
-    };
+    columnMap.set(detected, "email");
+    // Unlabeled columns stay empty rather than guessing which name is which.
+    if (mappedFields.size === 0) {
+      firstDataRow = looksLikeEmail(parsed[0][detected] ?? "") ? 0 : 1;
+    }
   }
 
   const rows: ParsedContactsFile["rows"] = [];
 
-  for (let i = 1; i < parsed.length; i++) {
+  for (let i = firstDataRow; i < parsed.length; i++) {
     const record = emptyRow(i + 1);
 
     parsed[i].forEach((value, index) => {
       const field = columnMap.get(index);
       if (field) {
-        record[field] = value.trim();
+        assignField(record, field, value);
       }
     });
 

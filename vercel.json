@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/process-email-queue",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/process-email-finder-queue",
+      "schedule": "30 12 * * *"
     }
   ]
 }

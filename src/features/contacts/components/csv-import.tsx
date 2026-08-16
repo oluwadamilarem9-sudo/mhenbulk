@@ -9,7 +9,12 @@ import type { CsvImportResult } from "@/features/contacts/schemas";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-export function CsvImport() {
+type Props = {
+  /** Extra guidance shown when a file cannot be read as a contact list. */
+  errorHint?: string;
+};
+
+export function CsvImport({ errorHint }: Props = {}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<CsvImportResult | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -109,7 +114,10 @@ export function CsvImport() {
 
             {previewError ? (
               <div className="mt-4">
-                <Alert variant="error">{previewError}</Alert>
+                <Alert variant="error">
+                  {previewError}
+                  {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+                </Alert>
               </div>
             ) : (
               <>

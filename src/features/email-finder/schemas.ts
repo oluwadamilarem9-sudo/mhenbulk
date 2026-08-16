@@ -8,16 +8,29 @@ export const scanRequestSchema = z.object({
     .max(2_000, "URL is too long."),
 });
 
+export const MAX_FINDER_SELECTION = 2_000;
+
 export const resultIdsSchema = z.object({
   scanId: z.string().uuid(),
-  resultIds: z.array(z.string().uuid()).min(1).max(500),
+  resultIds: z.array(z.string().uuid()).min(1).max(MAX_FINDER_SELECTION),
 });
 
 export const enrollFinderSchema = z.object({
   scanId: z.string().uuid(),
-  resultIds: z.array(z.string().uuid()).min(1).max(500),
+  resultIds: z.array(z.string().uuid()).min(1).max(MAX_FINDER_SELECTION),
   campaignId: z.string().uuid(),
 });
+
+/** Results are scoped by scan (single search) or batch (bulk website list). */
+export const selectionSchema = z
+  .object({
+    scanId: z.string().uuid().optional(),
+    batchId: z.string().uuid().optional(),
+    resultIds: z.array(z.string().uuid()).min(1).max(MAX_FINDER_SELECTION),
+  })
+  .refine((value) => Boolean(value.scanId ?? value.batchId), {
+    message: "A scan or batch is required.",
+  });
 
 export type EmailFinderActionState = {
   error?: string;

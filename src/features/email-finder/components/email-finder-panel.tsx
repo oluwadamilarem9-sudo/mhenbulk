@@ -3,15 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  Check,
-  Copy,
-  Download,
-  ExternalLink,
-  LoaderCircle,
-  Search,
-  UserPlus,
-} from "lucide-react";
+import { Download, LoaderCircle, Search, UserPlus } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +11,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CsvImport } from "@/features/contacts/components/csv-import";
 import {
   addFinderResultsToCampaignAction,
   addFinderResultsToContactsAction,
   markFinderResultsSelectedAction,
   prepareFinderCampaignContactsAction,
 } from "@/features/email-finder/actions";
+import { FinderResultsTable } from "@/features/email-finder/components/finder-results-table";
+import { exportResultsCsv } from "@/features/email-finder/export-csv";
 import type {
   EmailFinderResultRow,
   EmailFinderScanSummary,
@@ -62,32 +57,6 @@ function formatRelativeDate(value: string): string {
   return date.toLocaleDateString();
 }
 
-function exportCsv(rows: EmailFinderResultRow[]) {
-  const header = [
-    "first_name",
-    "last_name",
-    "email",
-    "company",
-    "source_url",
-    "discovered_at",
-  ];
-  const lines = [
-    header.join(","),
-    ...rows.map((row) =>
-      ["", "", row.email, "", row.sourceUrl, row.createdAt]
-        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
-        .join(","),
-    ),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const href = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = href;
-  anchor.download = "email-finder-results.csv";
-  anchor.click();
-  URL.revokeObjectURL(href);
-}
-
 export function EmailFinderPanel({
   initialScan,
   initialResults,
@@ -111,7 +80,6 @@ export function EmailFinderPanel({
   const [message, setMessage] = useState<EmailFinderActionState | null>(null);
   const [campaignId, setCampaignId] = useState(draftCampaigns[0]?.id ?? "");
   const [showCampaignPicker, setShowCampaignPicker] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
@@ -201,12 +169,6 @@ export function EmailFinderPanel({
     });
   }
 
-  async function copyEmail(row: EmailFinderResultRow) {
-    await navigator.clipboard.writeText(row.email);
-    setCopiedId(row.id);
-    window.setTimeout(() => setCopiedId((current) => (current === row.id ? null : current)), 1500);
-  }
-
   return (
     <div className="space-y-6">
       <Card>
@@ -248,6 +210,24 @@ export function EmailFinderPanel({
             Only use publicly available contact information in accordance with
             applicable laws and the website&apos;s terms. Respect opt-outs and
             unsubscribe requests.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Import emails from a file</CardTitle>
+          <CardDescription>
+            Upload a CSV, TXT, or TSV file to preview and add its valid email
+            addresses to Contacts. Existing contacts are skipped automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <CsvImport errorHint="If your file lists websites instead of emails, use “Scan a list of websites” below to find their emails." />
+          <p className="text-xs text-slate-500">
+            A header row is optional — email addresses are detected automatically.
+            CSV and TSV files can also include name, company, phone, tags, and notes
+            columns. TXT files should contain one email per line.
           </p>
         </CardContent>
       </Card>
@@ -335,80 +315,11 @@ export function EmailFinderPanel({
                   </select>
                 </div>
 
-                <div className="overflow-hidden rounded-xl border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 text-left text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 font-medium">Select</th>
-                        <th className="px-4 py-3 font-medium">Email</th>
-                        <th className="px-4 py-3 font-medium">Type</th>
-                        <th className="px-4 py-3 font-medium">Source</th>
-                        <th className="px-4 py-3 font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 bg-white">
-                      {filtered.map((row) => (
-                        <tr key={row.id}>
-                          <td className="px-4 py-3">
-                            <input
-                              type="checkbox"
-                              checked={selected.has(row.id)}
-                              onChange={() => toggle(row.id)}
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-medium text-slate-900">{row.email}</div>
-                            {row.addedToContacts ? (
-                              <p className="text-xs text-emerald-600">Already in Contacts</p>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge
-                              variant={
-                                row.category === "generic"
-                                  ? "warning"
-                                  : row.category === "personal"
-                                    ? "info"
-                                    : "muted"
-                              }
-                            >
-                              {row.category}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 text-slate-500">
-                            {sourcePath(row.sourceUrl)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => void copyEmail(row)}
-                              >
-                                {copiedId === row.id ? (
-                                  <Check className="h-4 w-4" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                                Copy
-                              </Button>
-                              <a
-                                href={row.sourceUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                                Open
-                              </a>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <FinderResultsTable
+                  rows={filtered}
+                  selected={selected}
+                  onToggle={toggle}
+                />
 
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="secondary" onClick={selectAllVisible}>
@@ -444,7 +355,7 @@ export function EmailFinderPanel({
                     type="button"
                     variant="ghost"
                     disabled={selectedRows.length === 0}
-                    onClick={() => exportCsv(selectedRows)}
+                    onClick={() => exportResultsCsv(selectedRows)}
                   >
                     <Download className="h-4 w-4" />
                     Export CSV

@@ -17,7 +17,10 @@ export const metadata = {
 };
 
 type PageProps = {
-  searchParams: Promise<{ finderScanId?: string | string[] }>;
+  searchParams: Promise<{
+    finderScanId?: string | string[];
+    finderBatchId?: string | string[];
+  }>;
 };
 
 export default async function NewCampaignPage({ searchParams }: PageProps) {
@@ -34,7 +37,11 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
   const rawFinderScanId = Array.isArray(query.finderScanId)
     ? query.finderScanId[0]
     : query.finderScanId;
+  const rawFinderBatchId = Array.isArray(query.finderBatchId)
+    ? query.finderBatchId[0]
+    : query.finderBatchId;
   const finderScanId = z.string().uuid().safeParse(rawFinderScanId);
+  const finderBatchId = z.string().uuid().safeParse(rawFinderBatchId);
 
   const [{ accounts }, { data: contacts }] = await Promise.all([
     listEmailAccounts(user.id),
@@ -49,15 +56,19 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
   ]);
 
   let preselectedContactIds: string[] = [];
-  if (finderScanId.success) {
-    const { data: selectedResults } = await supabase
+  if (finderScanId.success || finderBatchId.success) {
+    const selection = supabase
       .from("email_finder_results")
       .select("contact_id")
       .eq("user_id", user.id)
-      .eq("scan_id", finderScanId.data)
       .eq("selected", true)
       .not("contact_id", "is", null)
-      .limit(500);
+      .limit(2_000);
+
+    if (finderScanId.success) selection.eq("scan_id", finderScanId.data);
+    if (finderBatchId.success) selection.eq("batch_id", finderBatchId.data);
+
+    const { data: selectedResults } = await selection;
 
     preselectedContactIds = [
       ...new Set(
@@ -111,6 +122,7 @@ export default async function NewCampaignPage({ searchParams }: PageProps) {
             availableContacts={availableContacts}
             preselectedContactIds={preselectedContactIds}
             finderScanId={finderScanId.success ? finderScanId.data : null}
+            finderBatchId={finderBatchId.success ? finderBatchId.data : null}
           />
         </CardContent>
       </Card>

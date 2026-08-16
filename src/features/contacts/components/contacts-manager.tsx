@@ -563,9 +563,9 @@ export function ContactsManager({ contacts, tags }: ContactsManagerProps) {
       </Card>
 
       <p className="text-xs text-slate-500">
-        {contacts.length} contact{contacts.length === 1 ? "" : "s"} total. Import CSV
-        or TSV with an email column (name, company, phone, tags, and notes are
-        optional), or a TXT file with one email per line.
+        {contacts.length} contact{contacts.length === 1 ? "" : "s"} total. Import CSV,
+        TSV, or TXT files. A header row is optional — email addresses are detected
+        automatically, and name, company, phone, tags, and notes are optional.
       </p>
     </div>
   );

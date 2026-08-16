@@ -87,6 +87,7 @@ function mapResult(row: {
   };
 }
 
+/** Batch scans are reviewed through their batch, not the single-scan history. */
 export async function listRecentEmailFinderScans(
   userId: string,
   limit = 20,
@@ -98,6 +99,7 @@ export async function listRecentEmailFinderScans(
       "id, target_url, domain, status, pages_scanned, emails_found, limit_reached, javascript_hint, error_message, created_at, completed_at",
     )
     .eq("user_id", userId)
+    .is("batch_id", null)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -136,6 +138,7 @@ export async function getEmailFinderScanDetail(
   };
 }
 
+/** Only manual scans count toward the hourly limit; queued batches self-pace. */
 export async function countRecentScans(
   userId: string,
   withinMs: number,
@@ -146,6 +149,7 @@ export async function countRecentScans(
     .from("email_finder_scans")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
+    .is("batch_id", null)
     .gte("created_at", since);
   return count ?? 0;
 }

@@ -30,9 +30,11 @@ Users connect their **own Gmail account** via Google OAuth. Campaign emails are 
 - Enter a public website URL and discover emails that are already visible on public pages
 - Same-host bounded crawl (homepage + contact/about/team-style pages)
 - SSRF protections, robots.txt respect, rate limits, and source URL tracking
+- Upload a list of websites (CSV/TSV/TXT, header optional) and scan them all in a background queue
+- Batch progress with pause, resume, stop, and per-website failure reasons; scanning survives closing the page
 - Select results → add to Contacts, enroll in a draft Campaign, or create a new campaign
 - Export selected results as CSV
-- Scan history per user (RLS-scoped)
+- Scan and batch history per user (RLS-scoped)
 
 ### Campaigns
 - Create/edit campaigns with name, optional subject, HTML and plain-text content
