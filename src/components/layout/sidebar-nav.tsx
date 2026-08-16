@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  FileScan,
   Handshake,
   LayoutDashboard,
   Mail,
@@ -21,6 +22,11 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/email-finder", label: "Email Finder", icon: Search },
+  {
+    href: "/email-extractor-lite",
+    label: "Email Extractor Lite",
+    icon: FileScan,
+  },
   { href: "/partner-extractor", label: "Partner Extractor", icon: Handshake },
   { href: "/campaigns", label: "Campaigns", icon: Mail },
   { href: "/settings", label: "Settings", icon: Settings },
