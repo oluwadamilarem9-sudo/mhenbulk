@@ -1,14 +1,14 @@
 "use client";
 
+import { ArrowRight, Loader2, Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { useActionState } from "react";
 
 import { loginAction } from "@/features/auth/actions";
+import { AuthField } from "@/features/auth/components/auth-field";
 import type { AuthActionState } from "@/features/auth/schemas";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 const initialState: AuthActionState = {};
 
@@ -25,45 +25,52 @@ export function LoginForm({ nextPath = "/dashboard" }: LoginFormProps) {
 
       {state.error ? <Alert variant="error">{state.error}</Alert> : null}
 
-      <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          placeholder="you@company.com"
-          required
-        />
-        {state.fieldErrors?.email?.[0] ? (
-          <p className="text-xs text-rose-600">{state.fieldErrors.email[0]}</p>
-        ) : null}
-      </div>
+      <AuthField
+        label="Email"
+        icon={Mail}
+        id="email"
+        name="email"
+        type="email"
+        autoComplete="email"
+        placeholder="you@company.com"
+        required
+        error={state.fieldErrors?.email?.[0]}
+      />
 
-      <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          placeholder="••••••••"
-          required
-          minLength={8}
-        />
-        {state.fieldErrors?.password?.[0] ? (
-          <p className="text-xs text-rose-600">{state.fieldErrors.password[0]}</p>
-        ) : null}
-      </div>
+      <AuthField
+        label="Password"
+        icon={Lock}
+        id="password"
+        name="password"
+        autoComplete="current-password"
+        placeholder="Enter your password"
+        required
+        minLength={8}
+        reveal
+        error={state.fieldErrors?.password?.[0]}
+      />
 
-      <Button type="submit" className="w-full" disabled={pending}>
-        {pending ? "Signing in..." : "Sign in"}
+      <Button type="submit" size="lg" className="w-full" disabled={pending}>
+        {pending ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Signing in
+          </>
+        ) : (
+          <>
+            Sign in
+            <ArrowRight className="h-4 w-4" />
+          </>
+        )}
       </Button>
 
       <p className="text-center text-sm text-slate-500">
-        Don&apos;t have an account?{" "}
-        <Link href="/signup" className="font-medium text-indigo-600 hover:text-indigo-500">
-          Create one
+        New to Mhenbulk?{" "}
+        <Link
+          href="/signup"
+          className="font-medium text-indigo-600 transition hover:text-indigo-500"
+        >
+          Create your workspace
         </Link>
       </p>
     </form>
