@@ -157,8 +157,8 @@ async function saveResultsAsContacts(
       const result = firstResultByEmail.get(email)!;
       return {
         user_id: userId,
-        first_name: "Unknown",
-        last_name: "Unknown",
+        first_name: "",
+        last_name: "",
         email: result.email,
         source_type: "email_finder" as const,
         source_url: result.source_url,

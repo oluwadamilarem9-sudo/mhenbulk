@@ -99,7 +99,11 @@ export function isBlockedIpAddress(address: string): boolean {
 }
 
 function assertPublicHostname(hostname: string) {
-  const host = hostname.trim().toLowerCase().replace(/\.$/, "");
+  const host = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^\[(.*)\]$/, "$1");
   if (!host) {
     throw new SafeUrlError("invalid_url", "Enter a website URL.");
   }
@@ -121,16 +125,17 @@ function assertPublicHostname(hostname: string) {
 }
 
 export async function resolvePublicAddresses(hostname: string): Promise<string[]> {
-  assertPublicHostname(hostname);
+  const host = hostname.trim().replace(/^\[(.*)\]$/, "$1");
+  assertPublicHostname(host);
 
-  if (isIP(hostname)) {
-    if (isBlockedIpAddress(hostname)) {
+  if (isIP(host)) {
+    if (isBlockedIpAddress(host)) {
       throw new SafeUrlError(
         "private_address",
         "Private or internal network addresses cannot be scanned.",
       );
     }
-    return [hostname];
+    return [host];
   }
 
   let records: Array<{ address: string; family: number }>;
@@ -205,9 +210,17 @@ export async function validatePublicHttpUrl(
   };
 }
 
+/** Strips trailing dots and a leading www. so apex ↔ www redirects stay on-site. */
+export function normalizeHostname(hostname: string): string {
+  return hostname
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^www\./, "");
+}
+
 export function sameHost(a: string, b: string): boolean {
-  return a.trim().toLowerCase().replace(/\.$/, "") ===
-    b.trim().toLowerCase().replace(/\.$/, "");
+  return normalizeHostname(a) === normalizeHostname(b);
 }
 
 export function canonicalizeCrawlUrl(href: string, base?: string): string | null {

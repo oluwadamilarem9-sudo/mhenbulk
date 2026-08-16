@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Download, LoaderCircle, Search, UserPlus } from "lucide-react";
+import { Copy, Download, LoaderCircle, Search, UserPlus } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import {
 } from "@/features/email-finder/actions";
 import { FinderResultsTable } from "@/features/email-finder/components/finder-results-table";
 import { exportResultsCsv } from "@/features/email-finder/export-csv";
+import { isOwnerGradeEmail } from "@/features/email-finder/score";
 import type {
   EmailFinderResultRow,
   EmailFinderScanSummary,
@@ -74,6 +75,10 @@ export function EmailFinderPanel({
   const [categoryFilter, setCategoryFilter] = useState<"all" | "personal" | "business" | "generic">(
     "all",
   );
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "medium" | "low">(
+    "all",
+  );
+  const [ownerGradeOnly, setOwnerGradeOnly] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scannedPages, setScannedPages] = useState<string[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
@@ -86,14 +91,19 @@ export function EmailFinderPanel({
     const query = search.trim().toLowerCase();
     return results.filter((row) => {
       if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
+      if (confidenceFilter !== "all" && row.confidence !== confidenceFilter) {
+        return false;
+      }
+      if (ownerGradeOnly && !isOwnerGradeEmail(row.email, row.category)) return false;
       if (!query) return true;
       return (
         row.email.includes(query) ||
+        row.domain.toLowerCase().includes(query) ||
         row.sourceUrl.toLowerCase().includes(query) ||
         row.category.includes(query)
       );
     });
-  }, [results, search, categoryFilter]);
+  }, [results, search, categoryFilter, confidenceFilter, ownerGradeOnly]);
 
   const selectedRows = results.filter((row) => selected.has(row.id));
 
@@ -313,6 +323,26 @@ export function EmailFinderPanel({
                     <option value="business">Business</option>
                     <option value="generic">Generic</option>
                   </select>
+                  <select
+                    className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                    value={confidenceFilter}
+                    onChange={(event) =>
+                      setConfidenceFilter(event.target.value as typeof confidenceFilter)
+                    }
+                  >
+                    <option value="all">All confidence</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={ownerGradeOnly}
+                      onChange={(event) => setOwnerGradeOnly(event.target.checked)}
+                    />
+                    Owner-grade only
+                  </label>
                 </div>
 
                 <FinderResultsTable
@@ -359,6 +389,23 @@ export function EmailFinderPanel({
                   >
                     <Download className="h-4 w-4" />
                     Export CSV
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={selectedRows.length === 0}
+                    onClick={() =>
+                      void navigator.clipboard
+                        .writeText(selectedRows.map((row) => row.email).join("\n"))
+                        .then(() =>
+                          setMessage({
+                            success: `${selectedRows.length} email${selectedRows.length === 1 ? "" : "s"} copied.`,
+                          }),
+                        )
+                    }
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy Selected
                   </Button>
                 </div>
 

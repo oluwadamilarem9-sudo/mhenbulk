@@ -144,7 +144,7 @@ export async function POST(request: Request) {
   const { data: results } = await supabase
     .from("email_finder_results")
     .select(
-      "id, scan_id, email, source_url, category, selected, added_to_contacts, contact_id, created_at",
+      "id, scan_id, email, domain, source_url, source_urls, source_page_title, category, confidence, selected, added_to_contacts, contact_id, created_at",
     )
     .eq("scan_id", scan.id)
     .eq("user_id", user.id)
@@ -168,8 +168,15 @@ export async function POST(request: Request) {
       id: row.id,
       scanId: row.scan_id,
       email: row.email,
+      domain: row.domain || row.email.split("@")[1] || "",
       sourceUrl: row.source_url,
+      sourceUrls:
+        row.source_urls && row.source_urls.length > 0
+          ? row.source_urls
+          : [row.source_url],
+      sourcePageTitle: row.source_page_title ?? null,
       category: row.category,
+      confidence: row.confidence ?? "medium",
       selected: row.selected,
       addedToContacts: row.added_to_contacts,
       contactId: row.contact_id,

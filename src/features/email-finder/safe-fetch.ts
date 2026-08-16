@@ -1,5 +1,6 @@
 import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 
+import { finderDebug } from "@/features/email-finder/debug";
 import {
   SafeUrlError,
   canonicalizeCrawlUrl,
@@ -16,6 +17,7 @@ export type SafeFetchErrorCode =
   | "http_forbidden"
   | "http_not_found"
   | "http_rate_limited"
+  | "http_unavailable"
   | "http_error"
   | "network_error";
 
@@ -40,25 +42,42 @@ export type SafeFetchResult = {
   redirected: boolean;
 };
 
-function createPinnedAgent(addresses: string[]): Agent {
-  // IPv4 first: some serverless runtimes have no IPv6 egress.
-  const records = [...addresses]
+export type PinnedLookupRecord = { address: string; family: number };
+
+/** Pure helper so the happy-eyeballs array path can be unit-tested. */
+export function buildPinnedLookupRecords(addresses: string[]): PinnedLookupRecord[] {
+  return [...addresses]
     .map((address) => ({ address, family: address.includes(":") ? 6 : 4 }))
     .sort((a, b) => a.family - b.family);
+}
+
+export function pinnedLookupCallback(
+  records: PinnedLookupRecord[],
+  options: { all?: boolean } | undefined,
+  callback: (
+    error: Error | null,
+    addressOrRecords?: string | PinnedLookupRecord[],
+    family?: number,
+  ) => void,
+) {
+  if (!records.length) {
+    callback(new Error("No pinned addresses"));
+    return;
+  }
+  if (options?.all) {
+    callback(null, records);
+    return;
+  }
+  callback(null, records[0].address, records[0].family);
+}
+
+function createPinnedAgent(addresses: string[]): Agent {
+  const records = buildPinnedLookupRecords(addresses);
 
   return new Agent({
     connect: {
-      /**
-       * Pins the TCP connection to an address that already passed the SSRF
-       * checks. Node's happy-eyeballs support calls this with `all: true` and
-       * requires an array back; returning a bare string fails every connect.
-       */
       lookup(_hostname, options, callback) {
-        if (options?.all) {
-          callback(null, records as never);
-          return;
-        }
-        callback(null, records[0].address as never, records[0].family);
+        pinnedLookupCallback(records, options, callback as never);
       },
     },
   });
@@ -138,11 +157,29 @@ function mapHttpStatus(status: number): never {
       status,
     );
   }
+  if (status === 502 || status === 503 || status === 504) {
+    throw new SafeFetchError(
+      "http_unavailable",
+      "The website is temporarily unavailable.",
+      status,
+    );
+  }
   throw new SafeFetchError(
     "http_error",
     "We couldn't access this website.",
     status,
   );
+}
+
+function networkCause(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { reason: "unknown" };
+  const cause = (error as Error & { cause?: { code?: string; message?: string } }).cause;
+  return {
+    name: error.name,
+    message: error.message,
+    causeCode: cause?.code,
+    causeMessage: cause?.message,
+  };
 }
 
 export async function safeFetchHtml(
@@ -162,82 +199,106 @@ export async function safeFetchHtml(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 
-    let response: Response;
     try {
-      const init: UndiciRequestInit = {
-        method: "GET",
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          Accept: "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1",
-          "Accept-Language": "en-US,en;q=0.8",
-          "User-Agent": options.userAgent,
-        },
-        dispatcher: agent,
-      };
-      response = (await undiciFetch(current.href, init)) as unknown as Response;
-    } catch (error) {
-      if (error instanceof SafeUrlError) {
-        throw new SafeFetchError(error.code, error.message);
-      }
-      if (
-        error instanceof Error &&
-        (error.name === "AbortError" || error.message.includes("aborted"))
-      ) {
+      let response: Response;
+      try {
+        const init: UndiciRequestInit = {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            Accept:
+              "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1",
+            "Accept-Language": "en-US,en;q=0.8",
+            "User-Agent": options.userAgent,
+          },
+          dispatcher: agent,
+        };
+        response = (await undiciFetch(current.href, init)) as unknown as Response;
+      } catch (error) {
+        if (error instanceof SafeUrlError) {
+          throw new SafeFetchError(error.code, error.message);
+        }
+        if (
+          error instanceof Error &&
+          (error.name === "AbortError" || error.message.includes("aborted"))
+        ) {
+          throw new SafeFetchError(
+            "timeout",
+            "The website took too long to respond.",
+          );
+        }
+        finderDebug("network_error", {
+          url: current.href,
+          ...networkCause(error),
+        });
         throw new SafeFetchError(
-          "timeout",
-          "The website took too long to respond.",
+          "network_error",
+          "We couldn't access this website.",
         );
       }
-      throw new SafeFetchError(
-        "network_error",
-        "We couldn't access this website.",
-      );
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) {
+          throw new SafeFetchError(
+            "network_error",
+            "We couldn't access this website.",
+            response.status,
+          );
+        }
+        if (hop >= options.maxRedirects) {
+          throw new SafeFetchError(
+            "too_many_redirects",
+            "The website redirected too many times.",
+          );
+        }
+        const nextHref = canonicalizeCrawlUrl(location, current.href);
+        if (!nextHref) {
+          throw new SafeFetchError(
+            "invalid_url",
+            "The website redirected to an invalid URL.",
+          );
+        }
+        finderDebug("redirect", {
+          from: current.href,
+          to: nextHref,
+          status: response.status,
+        });
+        current = await validatePublicHttpUrl(nextHref);
+        redirected = true;
+        continue;
+      }
+
+      if (response.status >= 400) {
+        mapHttpStatus(response.status);
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      assertHtmlContentType(contentType);
+      const body = await readLimitedBody(response, options.maxBytes);
+
+      finderDebug("fetch_ok", {
+        url: rawUrl,
+        finalUrl: current.href,
+        status: response.status,
+        contentType,
+        bytes: body.length,
+        redirected,
+      });
+
+      return {
+        url: rawUrl,
+        finalUrl: current.href,
+        status: response.status,
+        contentType,
+        body,
+        redirected,
+      };
     } finally {
       clearTimeout(timer);
       void agent.close();
     }
-
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (!location) {
-        throw new SafeFetchError(
-          "network_error",
-          "We couldn't access this website.",
-          response.status,
-        );
-      }
-      if (hop >= options.maxRedirects) {
-        throw new SafeFetchError(
-          "too_many_redirects",
-          "The website redirected too many times.",
-        );
-      }
-      const nextHref = canonicalizeCrawlUrl(location, current.href);
-      if (!nextHref) {
-        throw new SafeFetchError("invalid_url", "The website redirected to an invalid URL.");
-      }
-      current = await validatePublicHttpUrl(nextHref);
-      redirected = true;
-      continue;
-    }
-
-    if (response.status >= 400) {
-      mapHttpStatus(response.status);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    assertHtmlContentType(contentType);
-    const body = await readLimitedBody(response, options.maxBytes);
-
-    return {
-      url: rawUrl,
-      finalUrl: current.href,
-      status: response.status,
-      contentType,
-      body,
-      redirected,
-    };
   }
 
   throw new SafeFetchError(

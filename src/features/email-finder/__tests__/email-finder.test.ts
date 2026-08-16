@@ -13,6 +13,8 @@ import {
   normalizeEmailCandidate,
 } from "@/features/email-finder/extract";
 import { isPathAllowed, parseRobotsTxt } from "@/features/email-finder/robots";
+import { isOwnerGradeEmail } from "@/features/email-finder/score";
+import { parseSitemapUrls } from "@/features/email-finder/sitemap";
 
 describe("url-security", () => {
   it("blocks private and metadata addresses", () => {
@@ -32,6 +34,7 @@ describe("url-security", () => {
     );
     expect(canonicalizeCrawlUrl("javascript:alert(1)", "https://example.com")).toBeNull();
     expect(sameHost("Example.com", "example.com.")).toBe(true);
+    expect(sameHost("www.example.com", "example.com")).toBe(true);
   });
 });
 
@@ -72,6 +75,7 @@ describe("email extraction", () => {
       "sales@acme-shop.com",
       "support@acme-shop.com",
     ]);
+    expect(extracted.emails.every((item) => item.confidence)).toBe(true);
     expect(extracted.links.some((link) => link.href.includes("/team"))).toBe(true);
     expect(extracted.links.every((link) => link.href.includes("acme-shop.com"))).toBe(
       true,
@@ -102,6 +106,9 @@ describe("email extraction", () => {
     expect(decodeObfuscatedEmails("kontakt at acme-shop dot de")).toEqual([
       "kontakt@acme-shop.de",
     ]);
+    expect(decodeObfuscatedEmails("hello @ acme-shop.com")).toEqual([
+      "hello@acme-shop.com",
+    ]);
     // German prose: "Daten.Diese" must not become "d@en.diese".
     expect(decodeObfuscatedEmails("Wir speichern Daten.Diese Angaben")).toEqual([]);
   });
@@ -110,6 +117,22 @@ describe("email extraction", () => {
     const html = "<body><p>info@shop.de</p><p>Bei Fragen</p></body>";
     const extracted = extractEmailsAndLinks(html, "https://shop.de/", "shop.de");
     expect(extracted.emails.map((item) => item.email)).toEqual(["info@shop.de"]);
+  });
+
+  it("reads public meta and JSON-LD addresses", () => {
+    const html = `
+      <html><head>
+        <meta name="author" content="owner@acme-shop.com" />
+        <script type="application/ld+json">
+          {"email":"press@acme-shop.com"}
+        </script>
+      </head><body></body></html>
+    `;
+    const extracted = extractEmailsAndLinks(html, "https://acme-shop.com/", "acme-shop.com");
+    expect(extracted.emails.map((item) => item.email).sort()).toEqual([
+      "owner@acme-shop.com",
+      "press@acme-shop.com",
+    ]);
   });
 
   it("prefers contact pages over cart and product links", () => {
@@ -123,21 +146,57 @@ describe("email extraction", () => {
     expect(extracted.links.at(-1)?.href).toMatch(/\/cart|\/products\/shirt/);
   });
 
-  it("deduplicates emails", () => {
+  it("deduplicates emails and keeps every source URL", () => {
     const rows = dedupeEmails([
       {
-        email: "a@example.com",
-        sourceUrl: "https://example.com/",
+        email: "a@acme-shop.com",
+        domain: "acme-shop.com",
+        sourceUrl: "https://acme-shop.com/",
+        sourceUrls: ["https://acme-shop.com/"],
+        sourcePageTitle: "Home",
         category: "business",
+        confidence: "medium",
+        methods: ["visible_text"],
       },
       {
-        email: "a@example.com",
-        sourceUrl: "https://example.com/contact",
+        email: "a@acme-shop.com",
+        domain: "acme-shop.com",
+        sourceUrl: "https://acme-shop.com/contact",
+        sourceUrls: ["https://acme-shop.com/contact"],
+        sourcePageTitle: "Contact",
         category: "business",
+        confidence: "medium",
+        methods: ["mailto"],
       },
     ]);
     expect(rows).toHaveLength(1);
-    expect(rows[0].sourceUrl).toContain("/contact");
+    expect(rows[0].sourceUrls).toEqual([
+      "https://acme-shop.com/",
+      "https://acme-shop.com/contact",
+    ]);
+    expect(rows[0].methods.sort()).toEqual(["mailto", "visible_text"]);
+  });
+});
+
+describe("scoring", () => {
+  it("marks role inboxes as non-owner-grade", () => {
+    expect(isOwnerGradeEmail("john.smith@acme-shop.com", "personal")).toBe(true);
+    expect(isOwnerGradeEmail("info@acme-shop.com", "business")).toBe(false);
+    expect(isOwnerGradeEmail("noreply@acme-shop.com", "generic")).toBe(false);
+  });
+});
+
+describe("sitemap", () => {
+  it("keeps only same-host priority URLs", () => {
+    const xml = `
+      <urlset>
+        <url><loc>https://acme-shop.com/contact</loc></url>
+        <url><loc>https://acme-shop.com/products/shirt</loc></url>
+        <url><loc>https://other.com/team</loc></url>
+      </urlset>
+    `;
+    const urls = parseSitemapUrls(xml, "acme-shop.com", "https://acme-shop.com");
+    expect(urls.map((item) => item.href)).toEqual(["https://acme-shop.com/contact"]);
   });
 });
 
@@ -154,5 +213,22 @@ Allow: /private/public
     expect(isPathAllowed(rules, "/private", "")).toBe(false);
     expect(isPathAllowed(rules, "/private/public", "")).toBe(true);
     expect(isPathAllowed(rules, "/contact", "")).toBe(true);
+  });
+
+  it("does not match User-agent tokens as substrings of the full UA", () => {
+    const text = `
+User-agent: app
+Disallow: /
+
+User-agent: MhenbulkEmailFinder
+Disallow: /admin
+Allow: /
+`.trim();
+    const rules = parseRobotsTxt(
+      text,
+      "MhenbulkEmailFinder/1.0 (+https://mhenbulk.vercel.app)",
+    );
+    expect(isPathAllowed(rules, "/", "")).toBe(true);
+    expect(isPathAllowed(rules, "/admin", "")).toBe(false);
   });
 });

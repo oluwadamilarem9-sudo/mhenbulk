@@ -8,9 +8,25 @@ export type RobotsRules = {
   disallow: string[];
 };
 
+/**
+ * Match User-agent tokens exactly (case-insensitive), never as a substring of
+ * the full UA string. Otherwise agents like `app` or `http` would match
+ * `MhenbulkEmailFinder/1.0 (+https://mhenbulk.vercel.app)`.
+ */
+function agentMatches(userAgent: string, token: string): boolean {
+  const ua = userAgent.trim().toLowerCase();
+  const agent = token.trim().toLowerCase();
+  if (!agent || agent === "*") return false;
+  if (ua === agent) return true;
+  // Product tokens such as "MhenbulkEmailFinder/1.0" or "Googlebot".
+  const products = ua.split(/[()\s]+/).filter(Boolean);
+  return products.some(
+    (product) => product === agent || product.startsWith(`${agent}/`),
+  );
+}
+
 function matchingGroups(text: string, userAgent: string): string[] {
   const groups = text.split(/(?=^User-agent:)/gim).filter(Boolean);
-  const ua = userAgent.toLowerCase();
   const matched: string[] = [];
   const wildcard: string[] = [];
 
@@ -22,11 +38,7 @@ function matchingGroups(text: string, userAgent: string): string[] {
     if (agents.some((agent) => agent === "*")) {
       wildcard.push(group);
     }
-    if (
-      agents.some(
-        (agent) => agent !== "*" && (ua.includes(agent) || agent.includes("mhenbulk")),
-      )
-    ) {
+    if (agents.some((agent) => agentMatches(userAgent, agent))) {
       matched.push(group);
     }
   }

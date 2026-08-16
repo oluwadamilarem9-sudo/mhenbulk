@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { CrawlResult } from "@/features/email-finder/crawler";
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, EmailFinderConfidence } from "@/lib/supabase/database.types";
 
 type AppSupabaseClient = SupabaseClient<Database>;
 
@@ -96,8 +96,13 @@ export async function persistCompletedScan(
     user_id: params.userId,
     scan_id: scan.id,
     email: item.email,
+    domain: item.domain || item.email.split("@")[1] || crawl.domain,
     source_url: item.sourceUrl,
+    source_page_title: item.sourcePageTitle,
+    source_urls: item.sourceUrls.length ? item.sourceUrls : [item.sourceUrl],
     category: item.category,
+    confidence: item.confidence as EmailFinderConfidence,
+    methods: item.methods,
     selected: false,
   }));
 

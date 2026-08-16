@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type {
   EmailFinderCategory,
+  EmailFinderConfidence,
   EmailFinderScanStatus,
 } from "@/lib/supabase/database.types";
 
@@ -22,8 +23,12 @@ export type EmailFinderResultRow = {
   id: string;
   scanId: string;
   email: string;
+  domain: string;
   sourceUrl: string;
+  sourceUrls: string[];
+  sourcePageTitle: string | null;
   category: EmailFinderCategory;
+  confidence: EmailFinderConfidence;
   selected: boolean;
   addedToContacts: boolean;
   contactId: string | null;
@@ -67,19 +72,32 @@ function mapResult(row: {
   id: string;
   scan_id: string;
   email: string;
+  domain?: string | null;
   source_url: string;
+  source_urls?: string[] | null;
+  source_page_title?: string | null;
   category: EmailFinderCategory;
+  confidence?: EmailFinderConfidence | null;
   selected: boolean;
   added_to_contacts: boolean;
   contact_id: string | null;
   created_at: string;
 }): EmailFinderResultRow {
+  const domain = row.domain || row.email.split("@")[1] || "";
+  const sourceUrls =
+    row.source_urls && row.source_urls.length > 0
+      ? row.source_urls
+      : [row.source_url];
   return {
     id: row.id,
     scanId: row.scan_id,
     email: row.email,
+    domain,
     sourceUrl: row.source_url,
+    sourceUrls,
+    sourcePageTitle: row.source_page_title ?? null,
     category: row.category,
+    confidence: row.confidence ?? "medium",
     selected: row.selected,
     addedToContacts: row.added_to_contacts,
     contactId: row.contact_id,
@@ -126,7 +144,7 @@ export async function getEmailFinderScanDetail(
   const { data: results } = await supabase
     .from("email_finder_results")
     .select(
-      "id, scan_id, email, source_url, category, selected, added_to_contacts, contact_id, created_at",
+      "id, scan_id, email, domain, source_url, source_urls, source_page_title, category, confidence, selected, added_to_contacts, contact_id, created_at",
     )
     .eq("scan_id", scanId)
     .eq("user_id", userId)

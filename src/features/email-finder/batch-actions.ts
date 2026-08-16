@@ -44,12 +44,26 @@ export async function createWebsiteScanBatchAction(
     return { error: "Website lists are limited to 2 MB." };
   }
 
-  return queueWebsites(await file.text(), file.name, file.name);
+  const customPaths = String(formData.get("customPaths") ?? "")
+    .split(/\r?\n|,/)
+    .map((path) => path.trim())
+    .filter(Boolean);
+
+  return queueWebsites(await file.text(), file.name, file.name, {
+    customPaths,
+    ownerGradeOnly: formData.get("ownerGradeOnly") === "1",
+    deepCrawl: formData.get("deepCrawl") !== "0",
+  });
 }
 
 /** Same flow for URLs typed or pasted straight into the page. */
 export async function createWebsiteScanBatchFromTextAction(
   text: string,
+  options: {
+    customPaths?: string[];
+    ownerGradeOnly?: boolean;
+    deepCrawl?: boolean;
+  } = {},
 ): Promise<BatchActionState> {
   if (typeof text !== "string" || text.trim() === "") {
     return { error: "Paste at least one website address." };
@@ -59,14 +73,18 @@ export async function createWebsiteScanBatchFromTextAction(
   }
 
   const stamp = new Date().toLocaleString();
-  // Parsed as CSV so pasted lists may be newline- or comma-separated.
-  return queueWebsites(text, `Pasted list — ${stamp}`, "pasted.csv");
+  return queueWebsites(text, `Pasted list — ${stamp}`, "pasted.csv", options);
 }
 
 async function queueWebsites(
   text: string,
   name: string,
   parseAs: string,
+  options: {
+    customPaths?: string[];
+    ownerGradeOnly?: boolean;
+    deepCrawl?: boolean;
+  } = {},
 ): Promise<BatchActionState> {
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
@@ -80,6 +98,11 @@ async function queueWebsites(
     };
   }
 
+  const customPaths = (options.customPaths ?? [])
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+
   const { data: batch, error: batchError } = await supabase
     .from("email_finder_batches")
     .insert({
@@ -87,6 +110,9 @@ async function queueWebsites(
       name: name.slice(0, 200),
       status: "pending",
       total_targets: parsed.rows.length,
+      custom_paths: customPaths,
+      owner_grade_only: options.ownerGradeOnly ?? false,
+      deep_crawl: options.deepCrawl ?? true,
     })
     .select("id")
     .single();
@@ -259,6 +285,14 @@ export async function deleteWebsiteScanBatchAction(
 
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  // Remove linked scans first. ON DELETE SET NULL would otherwise orphan them
+  // into the single-URL "Recent Searches" list.
+  await supabase
+    .from("email_finder_scans")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("batch_id", parsed.data);
 
   const { error } = await supabase
     .from("email_finder_batches")

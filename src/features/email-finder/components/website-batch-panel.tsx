@@ -60,6 +60,7 @@ import type {
 import { exportResultsCsv } from "@/features/email-finder/export-csv";
 import { FinderResultsTable } from "@/features/email-finder/components/finder-results-table";
 import type { EmailFinderActionState } from "@/features/email-finder/schemas";
+import { isOwnerGradeEmail } from "@/features/email-finder/score";
 import {
   MAX_BATCH_TARGETS,
   parseWebsiteUrlFile,
@@ -102,6 +103,10 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
 
   const [file, setFile] = useState<File | null>(null);
   const [pasted, setPasted] = useState("");
+  const [customPathDraft, setCustomPathDraft] = useState("");
+  const [customPaths, setCustomPaths] = useState<string[]>([]);
+  const [ownerGradeOnly, setOwnerGradeOnly] = useState(false);
+  const [deepCrawl, setDeepCrawl] = useState(true);
   const [preview, setPreview] = useState<ParsedWebsiteFile | null>(null);
   const [message, setMessage] = useState<EmailFinderActionState | null>(null);
   const [live, setLive] = useState<{
@@ -113,6 +118,10 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
   const [categoryFilter, setCategoryFilter] = useState<
     "all" | "personal" | "business" | "generic"
   >("all");
+  const [confidenceFilter, setConfidenceFilter] = useState<
+    "all" | "high" | "medium" | "low"
+  >("all");
+  const [ownerGradeFilter, setOwnerGradeFilter] = useState(false);
   const [selectionOverride, setSelectionOverride] = useState<{
     batchId: string | null;
     ids: Set<string>;
@@ -224,22 +233,48 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
     return () => window.clearInterval(timer);
   }, [batchId, running, readProgress]);
 
-  const pastedCount = useMemo(
-    () => (pasted.trim() ? parseWebsiteUrlFile(pasted, "pasted.csv").rows.length : 0),
-    [pasted],
-  );
+  const pastedStats = useMemo(() => {
+    if (!pasted.trim()) {
+      return { entered: 0, unique: 0, duplicates: 0 };
+    }
+    const parsed = parseWebsiteUrlFile(pasted, "pasted.csv");
+    const entered = pasted
+      .split(/[\n,]+/)
+      .map((part) => part.trim())
+      .filter(Boolean).length;
+    return {
+      entered,
+      unique: parsed.rows.length,
+      duplicates: parsed.duplicates,
+    };
+  }, [pasted]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const preferOwnerGrade = ownerGradeFilter || Boolean(progress?.ownerGradeOnly);
     return results.filter((row) => {
       if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
+      if (confidenceFilter !== "all" && row.confidence !== confidenceFilter) {
+        return false;
+      }
+      if (preferOwnerGrade && !isOwnerGradeEmail(row.email, row.category)) {
+        return false;
+      }
       if (!query) return true;
       return (
         row.email.toLowerCase().includes(query) ||
+        row.domain.toLowerCase().includes(query) ||
         row.sourceUrl.toLowerCase().includes(query)
       );
     });
-  }, [results, search, categoryFilter]);
+  }, [
+    results,
+    search,
+    categoryFilter,
+    confidenceFilter,
+    ownerGradeFilter,
+    progress?.ownerGradeOnly,
+  ]);
 
   async function handleFileSelected(selectedFile: File | null) {
     if (!selectedFile) return;
@@ -285,6 +320,9 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
     if (!file) return;
     const formData = new FormData();
     formData.set("file", file);
+    formData.set("customPaths", customPaths.join("\n"));
+    formData.set("ownerGradeOnly", ownerGradeOnly ? "1" : "0");
+    formData.set("deepCrawl", deepCrawl ? "1" : "0");
 
     startTransition(async () => {
       const result = await createWebsiteScanBatchAction(formData);
@@ -296,10 +334,23 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
   function queuePastedBatch() {
     const text = pasted;
     startTransition(async () => {
-      const result = await createWebsiteScanBatchFromTextAction(text);
+      const result = await createWebsiteScanBatchFromTextAction(text, {
+        customPaths,
+        ownerGradeOnly,
+        deepCrawl,
+      });
       if (!result.error) setPasted("");
       openQueuedBatch(result);
     });
+  }
+
+  function addCustomPath() {
+    const path = customPathDraft.trim();
+    if (!path) return;
+    setCustomPaths((current) =>
+      current.includes(path) ? current : [...current, path].slice(0, 20),
+    );
+    setCustomPathDraft("");
   }
 
   function runAction(action: () => Promise<{ error?: string; success?: string }>) {
@@ -355,16 +406,90 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
             <p className="text-xs text-slate-500">
-              {pastedCount > 0
-                ? `${pastedCount.toLocaleString()} unique website${pastedCount === 1 ? "" : "s"} ready`
+              {pastedStats.unique > 0
+                ? `${pastedStats.entered} URLs entered · ${pastedStats.unique} unique ready${
+                    pastedStats.duplicates
+                      ? ` · ${pastedStats.duplicates} duplicates removed`
+                      : ""
+                  }`
                 : "One per line, or comma separated. Duplicates are removed automatically."}
             </p>
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="custom-paths">Custom pages to scan</Label>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                id="custom-paths"
+                value={customPathDraft}
+                onChange={(event) => setCustomPathDraft(event.target.value)}
+                placeholder="/partners"
+                className="max-w-xs"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={addCustomPath}
+                disabled={!customPathDraft.trim()}
+              >
+                Add
+              </Button>
+            </div>
+            {customPaths.length ? (
+              <div className="flex flex-wrap gap-2">
+                {customPaths.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 hover:bg-slate-200"
+                    onClick={() =>
+                      setCustomPaths((current) =>
+                        current.filter((item) => item !== path),
+                      )
+                    }
+                  >
+                    {path} ×
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Optional same-site paths such as /team or /policies/privacy-policy.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-4 text-sm text-slate-700">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={deepCrawl}
+                onChange={(event) => setDeepCrawl(event.target.checked)}
+              />
+              Deep crawl contact, about, team, and policy pages
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={ownerGradeOnly}
+                onChange={(event) => setOwnerGradeOnly(event.target.checked)}
+              />
+              Owner-grade only
+            </label>
+          </div>
+
           <div className="flex flex-wrap gap-2">
-            <Button onClick={queuePastedBatch} disabled={busy || pastedCount === 0}>
+            <Button onClick={queuePastedBatch} disabled={busy || pastedStats.unique === 0}>
               <Search className="h-4 w-4" />
               Start extraction
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={!pasted}
+              onClick={() => setPasted("")}
+            >
+              Clear
             </Button>
             <input
               ref={inputRef}
@@ -528,9 +653,22 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
             {ACTIVE_STATUSES.has(progress.status) ? (
               <p className="inline-flex items-center gap-2 text-sm text-slate-600">
                 <LoaderCircle className="h-4 w-4 animate-spin text-indigo-600" />
-                Scanning in the background. Results appear here as each website
-                finishes.
+                {progress.currentlyScanning.length
+                  ? `Currently scanning: ${progress.currentlyScanning.join(", ")}`
+                  : "Scanning in the background. Results appear here as each website finishes."}
               </p>
+            ) : progress.status === "completed" ? (
+              <Alert variant="success">
+                Extraction complete — {progress.totalTargets} websites scanned,{" "}
+                {progress.emailsFound} unique emails found
+                {progress.emptyTargets
+                  ? `, ${progress.emptyTargets} with no public email`
+                  : ""}
+                {progress.failedTargets
+                  ? `, ${progress.failedTargets} unreachable`
+                  : ""}
+                .
+              </Alert>
             ) : null}
 
             <div className="flex flex-wrap gap-2">
@@ -649,6 +787,28 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
                     <option value="business">Business</option>
                     <option value="generic">Generic</option>
                   </select>
+                  <select
+                    className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                    value={confidenceFilter}
+                    onChange={(event) =>
+                      setConfidenceFilter(
+                        event.target.value as typeof confidenceFilter,
+                      )
+                    }
+                  >
+                    <option value="all">All confidence</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={ownerGradeFilter || Boolean(progress.ownerGradeOnly)}
+                      onChange={(event) => setOwnerGradeFilter(event.target.checked)}
+                    />
+                    Owner-grade only
+                  </label>
                 </div>
 
                 <FinderResultsTable

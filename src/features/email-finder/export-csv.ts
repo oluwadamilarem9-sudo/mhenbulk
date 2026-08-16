@@ -1,19 +1,21 @@
 import type { EmailFinderResultRow } from "@/features/email-finder/queries";
 
 const HEADER = [
+  "email",
+  "domain",
+  "source_url",
+  "category",
+  "confidence",
+  "discovered_at",
   "first_name",
   "last_name",
-  "email",
-  "company",
-  "source_url",
-  "discovered_at",
 ];
 
 function quote(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-/** Exports in the same shape the contacts importer accepts. */
+/** Exports finder results with auditable source and classification fields. */
 export function exportResultsCsv(
   rows: EmailFinderResultRow[],
   fileName = "email-finder-results.csv",
@@ -21,7 +23,19 @@ export function exportResultsCsv(
   const lines = [
     HEADER.join(","),
     ...rows.map((row) =>
-      ["", "", row.email, "", row.sourceUrl, row.createdAt].map(String).map(quote).join(","),
+      [
+        row.email,
+        row.domain,
+        row.sourceUrl,
+        row.category,
+        row.confidence,
+        row.createdAt,
+        "",
+        "",
+      ]
+        .map(String)
+        .map(quote)
+        .join(","),
     ),
   ];
 

@@ -6,6 +6,7 @@ import type {
   Database,
   EmailFinderBatchStatus,
   EmailFinderCategory,
+  EmailFinderConfidence,
   EmailFinderTargetStatus,
 } from "@/lib/supabase/database.types";
 
@@ -31,6 +32,11 @@ export type EmailFinderBatchProgress = EmailFinderBatchSummary & {
   runningTargets: number;
   /** Scanned successfully but published no address. */
   emptyTargets: number;
+  /** Domains currently claimed by a worker. */
+  currentlyScanning: string[];
+  customPaths: string[];
+  ownerGradeOnly: boolean;
+  deepCrawl: boolean;
 };
 
 export type EmailFinderBatchFailure = {
@@ -54,12 +60,15 @@ type BatchRow = {
   processed_targets: number;
   failed_targets: number;
   emails_found: number;
+  custom_paths?: string[] | null;
+  owner_grade_only?: boolean | null;
+  deep_crawl?: boolean | null;
   created_at: string;
   completed_at: string | null;
 };
 
 const BATCH_COLUMNS =
-  "id, name, status, total_targets, processed_targets, failed_targets, emails_found, created_at, completed_at";
+  "id, name, status, total_targets, processed_targets, failed_targets, emails_found, custom_paths, owner_grade_only, deep_crawl, created_at, completed_at";
 
 function mapBatch(row: BatchRow): EmailFinderBatchSummary {
   return {
@@ -117,7 +126,7 @@ export async function getBatchProgress(
 
   if (!batch) return null;
 
-  const [queued, running, empty] = await Promise.all([
+  const [queued, running, empty, active] = await Promise.all([
     countTargets(supabase, batchId, "queued"),
     countTargets(supabase, batchId, "running"),
     supabase
@@ -126,6 +135,12 @@ export async function getBatchProgress(
       .eq("batch_id", batchId)
       .eq("status", "completed")
       .eq("emails_found", 0),
+    supabase
+      .from("email_finder_batch_targets")
+      .select("domain")
+      .eq("batch_id", batchId)
+      .eq("status", "running")
+      .limit(8),
   ]);
 
   return {
@@ -133,6 +148,10 @@ export async function getBatchProgress(
     queuedTargets: queued,
     runningTargets: running,
     emptyTargets: empty.count ?? 0,
+    currentlyScanning: (active.data ?? []).map((row) => row.domain),
+    customPaths: batch.custom_paths ?? [],
+    ownerGradeOnly: batch.owner_grade_only ?? false,
+    deepCrawl: batch.deep_crawl ?? true,
   };
 }
 
@@ -148,7 +167,7 @@ export async function getEmailFinderBatchDetail(
     supabase
       .from("email_finder_results")
       .select(
-        "id, scan_id, email, source_url, category, selected, added_to_contacts, contact_id, created_at",
+        "id, scan_id, email, domain, source_url, source_urls, source_page_title, category, confidence, selected, added_to_contacts, contact_id, created_at",
       )
       .eq("user_id", userId)
       .eq("batch_id", batchId)
@@ -175,12 +194,21 @@ export async function getEmailFinderBatchDetail(
     const key = row.email.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+    const domain = row.domain || row.email.split("@")[1] || "";
+    const sourceUrls =
+      row.source_urls && row.source_urls.length > 0
+        ? row.source_urls
+        : [row.source_url];
     deduped.push({
       id: row.id,
       scanId: row.scan_id,
       email: row.email,
+      domain,
       sourceUrl: row.source_url,
+      sourceUrls,
+      sourcePageTitle: row.source_page_title ?? null,
       category: row.category as EmailFinderCategory,
+      confidence: (row.confidence as EmailFinderConfidence | null) ?? "medium",
       selected: row.selected,
       addedToContacts: row.added_to_contacts,
       contactId: row.contact_id,

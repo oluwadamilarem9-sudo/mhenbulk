@@ -43,11 +43,40 @@ type ClaimedTarget = {
   attempts: number;
 };
 
+type BatchScanOptions = {
+  customPaths: string[];
+  deepCrawl: boolean;
+};
+
+const batchOptionsCache = new Map<string, BatchScanOptions>();
+
+async function getBatchScanOptions(
+  supabase: AppSupabaseClient,
+  batchId: string,
+): Promise<BatchScanOptions> {
+  const cached = batchOptionsCache.get(batchId);
+  if (cached) return cached;
+
+  const { data } = await supabase
+    .from("email_finder_batches")
+    .select("custom_paths, deep_crawl")
+    .eq("id", batchId)
+    .maybeSingle();
+
+  const options: BatchScanOptions = {
+    customPaths: data?.custom_paths ?? [],
+    deepCrawl: data?.deep_crawl ?? true,
+  };
+  batchOptionsCache.set(batchId, options);
+  return options;
+}
+
 /** Transient problems deserve another attempt; permanent ones do not. */
 const RETRYABLE_CODES = new Set([
   "timeout",
   "network_error",
   "http_rate_limited",
+  "http_unavailable",
   "dns_failed",
   "scan_failed",
 ]);
@@ -230,11 +259,14 @@ async function processTarget(
   target: ClaimedTarget,
   config: ReturnType<typeof getEmailFinderBatchConfig>,
 ): Promise<{ outcome: "completed" | "failed" | "retried"; emails: number }> {
+  const options = await getBatchScanOptions(supabase, target.batch_id);
   const crawl = await crawlWebsiteForEmails(target.url, {
     maxPagesPerScan: config.maxPagesPerSite,
     maxDepth: config.maxDepth,
     maxScanDurationMs: config.siteBudgetMs,
     concurrency: config.pageConcurrency,
+    customPaths: options.customPaths,
+    deepCrawl: options.deepCrawl,
   });
 
   if (!crawl.ok) {
@@ -242,6 +274,9 @@ async function processTarget(
       RETRYABLE_CODES.has(crawl.error.code) && target.attempts < config.maxAttempts;
 
     if (retryable) {
+      if (config.retryBackoffMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, config.retryBackoffMs));
+      }
       await supabase
         .from("email_finder_batch_targets")
         .update({

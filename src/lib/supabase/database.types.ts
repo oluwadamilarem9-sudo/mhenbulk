@@ -74,6 +74,8 @@ export type EmailFinderScanStatus = "running" | "completed" | "partial" | "faile
 
 export type EmailFinderCategory = "personal" | "business" | "generic";
 
+export type EmailFinderConfidence = "high" | "medium" | "low";
+
 export type EmailFinderBatchStatus =
   | "pending"
   | "running"
@@ -938,8 +940,13 @@ export type Database = {
           scan_id: string;
           email: string;
           email_normalized: string;
+          domain: string;
           source_url: string;
+          source_page_title: string | null;
+          source_urls: string[];
           category: EmailFinderCategory;
+          confidence: EmailFinderConfidence;
+          methods: string[];
           selected: boolean;
           added_to_contacts: boolean;
           contact_id: string | null;
@@ -952,8 +959,13 @@ export type Database = {
           scan_id: string;
           email: string;
           email_normalized?: string;
+          domain?: string;
           source_url: string;
+          source_page_title?: string | null;
+          source_urls?: string[];
           category?: EmailFinderCategory;
+          confidence?: EmailFinderConfidence;
+          methods?: string[];
           selected?: boolean;
           added_to_contacts?: boolean;
           contact_id?: string | null;
@@ -966,8 +978,13 @@ export type Database = {
           scan_id?: string;
           email?: string;
           email_normalized?: string;
+          domain?: string;
           source_url?: string;
+          source_page_title?: string | null;
+          source_urls?: string[];
           category?: EmailFinderCategory;
+          confidence?: EmailFinderConfidence;
+          methods?: string[];
           selected?: boolean;
           added_to_contacts?: boolean;
           contact_id?: string | null;
@@ -1008,6 +1025,9 @@ export type Database = {
           processed_targets: number;
           failed_targets: number;
           emails_found: number;
+          custom_paths: string[];
+          owner_grade_only: boolean;
+          deep_crawl: boolean;
           started_at: string | null;
           completed_at: string | null;
           created_at: string;
@@ -1022,6 +1042,9 @@ export type Database = {
           processed_targets?: number;
           failed_targets?: number;
           emails_found?: number;
+          custom_paths?: string[];
+          owner_grade_only?: boolean;
+          deep_crawl?: boolean;
           started_at?: string | null;
           completed_at?: string | null;
           created_at?: string;
@@ -1036,6 +1059,9 @@ export type Database = {
           processed_targets?: number;
           failed_targets?: number;
           emails_found?: number;
+          custom_paths?: string[];
+          owner_grade_only?: boolean;
+          deep_crawl?: boolean;
           started_at?: string | null;
           completed_at?: string | null;
           created_at?: string;
@@ -1131,6 +1157,7 @@ export type Database = {
       campaign_step_audience_mode: CampaignStepAudienceMode;
       email_finder_scan_status: EmailFinderScanStatus;
       email_finder_category: EmailFinderCategory;
+      email_finder_confidence: EmailFinderConfidence;
       email_finder_batch_status: EmailFinderBatchStatus;
       email_finder_target_status: EmailFinderTargetStatus;
     };

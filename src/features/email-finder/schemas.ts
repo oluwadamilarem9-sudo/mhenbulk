@@ -57,6 +57,7 @@ export const USER_FACING_SCAN_ERRORS: Record<string, string> = {
   http_forbidden: "The website blocked automated requests.",
   http_not_found: "We couldn't find that page.",
   http_rate_limited: "The website is rate-limiting requests. Try again later.",
+  http_unavailable: "The website is temporarily unavailable.",
   http_error: "We couldn't access this website.",
   network_error: "We couldn't access this website.",
   robots_blocked: "Website crawling is not allowed for this path.",

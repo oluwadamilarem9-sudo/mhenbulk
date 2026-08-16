@@ -15,14 +15,26 @@ type Props = {
   showDomain?: boolean;
 };
 
-function sourceLabel(url: string, showDomain: boolean): string {
+function sourceLabel(row: EmailFinderResultRow, showDomain: boolean): string {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(row.sourceUrl);
     if (showDomain) return parsed.hostname.replace(/^www\./, "");
-    return `${parsed.pathname}${parsed.search}` || "/";
+    const path = `${parsed.pathname}${parsed.search}` || "/";
+    if (row.sourceUrls.length > 1) {
+      return `${path} · +${row.sourceUrls.length - 1} more`;
+    }
+    return path;
   } catch {
-    return url;
+    return row.sourceUrl;
   }
+}
+
+function confidenceVariant(
+  confidence: EmailFinderResultRow["confidence"],
+): "info" | "muted" | "warning" {
+  if (confidence === "high") return "info";
+  if (confidence === "low") return "warning";
+  return "muted";
 }
 
 export function FinderResultsTable({
@@ -50,6 +62,7 @@ export function FinderResultsTable({
             <th className="px-4 py-3 font-medium">Select</th>
             <th className="px-4 py-3 font-medium">Email</th>
             <th className="px-4 py-3 font-medium">Type</th>
+            <th className="px-4 py-3 font-medium">Confidence</th>
             <th className="px-4 py-3 font-medium">
               {showDomain ? "Website" : "Source"}
             </th>
@@ -69,6 +82,9 @@ export function FinderResultsTable({
               </td>
               <td className="px-4 py-3">
                 <div className="font-medium break-all text-slate-900">{row.email}</div>
+                {row.sourcePageTitle ? (
+                  <p className="text-xs text-slate-500">{row.sourcePageTitle}</p>
+                ) : null}
                 {row.addedToContacts ? (
                   <p className="text-xs text-emerald-600">Already in Contacts</p>
                 ) : null}
@@ -86,8 +102,13 @@ export function FinderResultsTable({
                   {row.category}
                 </Badge>
               </td>
+              <td className="px-4 py-3">
+                <Badge variant={confidenceVariant(row.confidence)}>
+                  {row.confidence}
+                </Badge>
+              </td>
               <td className="px-4 py-3 break-all text-slate-500">
-                {sourceLabel(row.sourceUrl, showDomain)}
+                {sourceLabel(row, showDomain)}
               </td>
               <td className="px-4 py-3">
                 <div className="flex flex-wrap gap-2">
