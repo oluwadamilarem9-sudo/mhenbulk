@@ -41,12 +41,24 @@ export type SafeFetchResult = {
 };
 
 function createPinnedAgent(addresses: string[]): Agent {
-  const preferred = addresses[0];
+  // IPv4 first: some serverless runtimes have no IPv6 egress.
+  const records = [...addresses]
+    .map((address) => ({ address, family: address.includes(":") ? 6 : 4 }))
+    .sort((a, b) => a.family - b.family);
+
   return new Agent({
     connect: {
-      // Pin the TCP connection to a previously validated public address.
-      lookup(_hostname, _options, callback) {
-        callback(null, preferred, preferred.includes(":") ? 6 : 4);
+      /**
+       * Pins the TCP connection to an address that already passed the SSRF
+       * checks. Node's happy-eyeballs support calls this with `all: true` and
+       * requires an array back; returning a bare string fails every connect.
+       */
+      lookup(_hostname, options, callback) {
+        if (options?.all) {
+          callback(null, records as never);
+          return;
+        }
+        callback(null, records[0].address as never, records[0].family);
       },
     },
   });

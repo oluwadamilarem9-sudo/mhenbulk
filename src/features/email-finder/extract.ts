@@ -6,19 +6,166 @@ import { canonicalizeCrawlUrl, sameHost } from "@/features/email-finder/url-secu
 const EMAIL_PATTERN =
   /(?:mailto:)?([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/gi;
 
+/** Contact-ish pages, including the German and Shopify conventions. */
 const PRIORITY_KEYWORDS = [
   "contact",
+  "kontakt",
+  "impressum",
+  "imprint",
   "about",
+  "ueber-uns",
+  "über-uns",
+  "over-ons",
+  "nosotros",
   "team",
   "staff",
   "support",
   "sales",
   "services",
   "company",
+  "unternehmen",
   "leadership",
   "careers",
   "people",
+  "legal",
+  "policies",
+  "privacy",
+  "datenschutz",
+  "help",
+  "hilfe",
 ];
+
+/** Pages that almost never publish an address but burn the page budget. */
+const LOW_VALUE_PATTERNS = [
+  "/cart",
+  "/checkout",
+  "/account",
+  "/login",
+  "/signin",
+  "/register",
+  "/wishlist",
+  "/search",
+  "/basket",
+  "/feed",
+  "/wp-json",
+  "/wp-admin",
+  "/tag/",
+  "/tags/",
+  "/category/",
+  "/collections/",
+  "/products/",
+  "/product/",
+  "/blogs/",
+  "/blog/",
+];
+
+/** Placeholder and telemetry addresses that are never real contacts. */
+const JUNK_DOMAINS = new Set([
+  "example.com",
+  "example.org",
+  "example.net",
+  "domain.com",
+  "yourdomain.com",
+  "yourcompany.com",
+  "email.com",
+  "sentry.io",
+  "sentry-next.wixpress.com",
+  "wixpress.com",
+  "wix.com",
+  "godaddy.com",
+  "squarespace.com",
+  "shopify.com",
+  "myshopify.com",
+  "cloudflare.com",
+  "w3.org",
+  "schema.org",
+  "test.com",
+  "mail.com",
+]);
+
+/**
+ * Common endings used as a sanity check. Any two-letter country code is also
+ * accepted, so this list only needs the gTLDs that show up in practice.
+ */
+const KNOWN_TLDS = new Set([
+  "com",
+  "net",
+  "org",
+  "info",
+  "biz",
+  "shop",
+  "store",
+  "online",
+  "site",
+  "web",
+  "xyz",
+  "dev",
+  "app",
+  "tech",
+  "digital",
+  "agency",
+  "email",
+  "media",
+  "news",
+  "today",
+  "world",
+  "group",
+  "club",
+  "life",
+  "live",
+  "studio",
+  "design",
+  "gmbh",
+  "haus",
+  "berlin",
+  "hamburg",
+  "koeln",
+  "bayern",
+  "nrw",
+  "wien",
+  "swiss",
+  "paris",
+  "london",
+  "shopping",
+  "boutique",
+  "company",
+  "solutions",
+  "services",
+  "consulting",
+  "clinic",
+  "coach",
+  "expert",
+  "photography",
+  "travel",
+  "gallery",
+  "kitchen",
+  "energy",
+  "fitness",
+  "care",
+]);
+
+/** Filenames caught by the address pattern, e.g. `logo@2x.png`. */
+const ASSET_SUFFIXES = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "avif",
+  "ico",
+  "css",
+  "js",
+  "mjs",
+  "json",
+  "woff",
+  "woff2",
+  "ttf",
+  "eot",
+  "mp4",
+  "webm",
+  "pdf",
+]);
 
 const GENERIC_LOCAL_PARTS = new Set([
   "noreply",
@@ -108,7 +255,64 @@ export function normalizeEmailCandidate(raw: string): string | null {
   if (value.includes("..") || value.startsWith(".") || value.includes("@.")) {
     return null;
   }
+
+  const [local, domain] = value.split("@");
+  const suffix = domain.split(".").pop() ?? "";
+  if (ASSET_SUFFIXES.has(suffix)) return null;
+  if (JUNK_DOMAINS.has(domain)) return null;
+  if (domain.endsWith(".wixpress.com") || domain.endsWith(".sentry.io")) return null;
+  // Hex blobs such as tracking ids that happen to contain an @.
+  if (/^[0-9a-f]{16,}$/.test(local)) return null;
+  // Sentence text glued to an address, e.g. `info@shop.comverbraucher...`.
+  if (suffix.length > 12 && !KNOWN_TLDS.has(suffix)) return null;
+  if (suffix.length > 2 && !KNOWN_TLDS.has(suffix) && !/^[a-z]{3,10}$/.test(suffix)) {
+    return null;
+  }
+
   return value;
+}
+
+/**
+ * Cloudflare replaces addresses with a hex blob that the browser decodes.
+ * The first byte is the XOR key for the remaining bytes.
+ */
+export function decodeCloudflareEmail(encoded: string): string | null {
+  const hex = encoded.trim().toLowerCase();
+  if (!/^[0-9a-f]{6,}$/.test(hex) || hex.length % 2 !== 0) return null;
+
+  const key = Number.parseInt(hex.slice(0, 2), 16);
+  let decoded = "";
+  for (let index = 2; index < hex.length; index += 2) {
+    const code = Number.parseInt(hex.slice(index, index + 2), 16) ^ key;
+    decoded += String.fromCharCode(code);
+  }
+  return normalizeEmailCandidate(decoded);
+}
+
+/**
+ * Handles `info (at) example (dot) com` style anti-scraping text.
+ *
+ * The separators must be bracketed or space-delimited. A looser pattern turns
+ * ordinary prose into addresses — German "D-at-en.Diese" becomes "d@en.diese".
+ */
+const OBFUSCATED_PATTERNS = [
+  /([a-z0-9._%+\-]+)\s*[([{]\s*(?:at|ät)\s*[)\]}]\s*([a-z0-9.\-]+?)\s*(?:[([{]\s*(?:dot|punkt)\s*[)\]}]|\.)\s*([a-z]{2,})/gi,
+  /([a-z0-9._%+\-]+)\s+(?:at|ät)\s+([a-z0-9.\-]+?)\s+(?:dot|punkt)\s+([a-z]{2,})/gi,
+];
+
+export function decodeObfuscatedEmails(text: string): string[] {
+  const found: string[] = [];
+
+  for (const pattern of OBFUSCATED_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const candidate = normalizeEmailCandidate(
+        `${match[1]}@${match[2]}.${match[3]}`,
+      );
+      if (candidate) found.push(candidate);
+    }
+  }
+
+  return found;
 }
 
 export function categorizeEmail(email: string): EmailFinderCategory {
@@ -132,12 +336,18 @@ export function categorizeEmail(email: string): EmailFinderCategory {
 }
 
 function scoreLink(href: string, text: string): number {
-  const haystack = `${href} ${text}`.toLowerCase();
+  const path = href.toLowerCase();
+  const haystack = `${path} ${text.toLowerCase()}`;
   let score = 0;
+
   for (const keyword of PRIORITY_KEYWORDS) {
     if (haystack.includes(keyword)) score += 10;
   }
+  for (const pattern of LOW_VALUE_PATTERNS) {
+    if (path.includes(pattern)) score -= 25;
+  }
   if (href === "/" || href.endsWith("/")) score += 1;
+
   return score;
 }
 
@@ -149,6 +359,35 @@ export function extractEmailsAndLinks(
   const $ = cheerio.load(html);
   const emails = new Map<string, ExtractedEmail>();
   const links = new Map<string, number>();
+
+  function record(candidate: string | null) {
+    if (!candidate || emails.has(candidate)) return;
+    emails.set(candidate, {
+      email: candidate,
+      sourceUrl: pageUrl,
+      category: categorizeEmail(candidate),
+    });
+  }
+
+  // Cloudflare-protected addresses, before scripts are stripped.
+  $("[data-cfemail]").each((_, element) => {
+    record(decodeCloudflareEmail($(element).attr("data-cfemail") ?? ""));
+  });
+  for (const match of html.matchAll(
+    /\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/gi,
+  )) {
+    record(decodeCloudflareEmail(match[1] ?? ""));
+  }
+
+  // JSON-LD and inline config blocks often carry the contact address.
+  $('script[type="application/ld+json"], script[type="application/json"]').each(
+    (_, element) => {
+      const raw = $(element).text();
+      for (const match of raw.matchAll(EMAIL_PATTERN)) {
+        record(normalizeEmailCandidate(match[1] ?? match[0]));
+      }
+    },
+  );
 
   $("script, style, noscript").remove();
 
@@ -180,30 +419,20 @@ export function extractEmailsAndLinks(
     }
   });
 
-  const bodyText = decodeEntities($.root().text());
+  // Tag boundaries become spaces, otherwise adjacent blocks glue together and
+  // produce addresses like `info@shop.comNext paragraph`.
+  const bodyText = decodeEntities($.html().replace(/<[^>]*>/g, " "));
   for (const match of bodyText.matchAll(EMAIL_PATTERN)) {
-    const email = normalizeEmailCandidate(match[1] ?? match[0]);
-    if (!email) continue;
-    if (!emails.has(email)) {
-      emails.set(email, {
-        email,
-        sourceUrl: pageUrl,
-        category: categorizeEmail(email),
-      });
-    }
+    record(normalizeEmailCandidate(match[1] ?? match[0]));
   }
 
-  // Also scan raw HTML attributes that may contain mailto outside <a>.
+  for (const candidate of decodeObfuscatedEmails(bodyText)) {
+    record(candidate);
+  }
+
+  // Attributes outside <a>, such as data-email or onclick handlers.
   for (const match of html.matchAll(/mailto:([^\s"'<>]+)/gi)) {
-    const email = normalizeEmailCandidate(match[1] ?? "");
-    if (!email) continue;
-    if (!emails.has(email)) {
-      emails.set(email, {
-        email,
-        sourceUrl: pageUrl,
-        category: categorizeEmail(email),
-      });
-    }
+    record(normalizeEmailCandidate(match[1] ?? ""));
   }
 
   const javascriptHint =

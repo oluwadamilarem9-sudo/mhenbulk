@@ -29,6 +29,8 @@ export type EmailFinderBatchSummary = {
 export type EmailFinderBatchProgress = EmailFinderBatchSummary & {
   queuedTargets: number;
   runningTargets: number;
+  /** Scanned successfully but published no address. */
+  emptyTargets: number;
 };
 
 export type EmailFinderBatchFailure = {
@@ -115,12 +117,23 @@ export async function getBatchProgress(
 
   if (!batch) return null;
 
-  const [queued, running] = await Promise.all([
+  const [queued, running, empty] = await Promise.all([
     countTargets(supabase, batchId, "queued"),
     countTargets(supabase, batchId, "running"),
+    supabase
+      .from("email_finder_batch_targets")
+      .select("id", { count: "exact", head: true })
+      .eq("batch_id", batchId)
+      .eq("status", "completed")
+      .eq("emails_found", 0),
   ]);
 
-  return { ...mapBatch(batch), queuedTargets: queued, runningTargets: running };
+  return {
+    ...mapBatch(batch),
+    queuedTargets: queued,
+    runningTargets: running,
+    emptyTargets: empty.count ?? 0,
+  };
 }
 
 export async function getEmailFinderBatchDetail(

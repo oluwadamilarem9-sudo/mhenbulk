@@ -16,9 +16,25 @@ import {
 import { SafeFetchError, safeFetchHtml } from "@/features/email-finder/safe-fetch";
 import {
   SafeUrlError,
+  canonicalizeCrawlUrl,
   sameHost,
   validatePublicHttpUrl,
 } from "@/features/email-finder/url-security";
+
+/**
+ * Conventional public contact pages. These are ordinary pages a visitor can
+ * open; nothing here guesses or constructs an email address.
+ */
+const CANDIDATE_CONTACT_PATHS = [
+  "/contact",
+  "/contact-us",
+  "/pages/contact",
+  "/kontakt",
+  "/impressum",
+  "/policies/contact-information",
+  "/about",
+  "/about-us",
+];
 
 export type CrawlPageStatus = {
   url: string;
@@ -160,12 +176,21 @@ export async function crawlWebsiteForEmails(
 
     type QueueItem = { url: string; depth: number; priority: number };
     const queue: QueueItem[] = [{ url: seed.href, depth: 0, priority: 100 }];
+
+    // Standard public contact pages, queued even when nothing links to them.
+    for (const path of CANDIDATE_CONTACT_PATHS) {
+      const candidate = canonicalizeCrawlUrl(path, seed.origin);
+      if (candidate && candidate !== seed.href) {
+        queue.push({ url: candidate, depth: 1, priority: 60 });
+      }
+    }
     const visited = new Set<string>();
     const scannedPages: string[] = [];
     const discovered: ExtractedEmail[] = [];
     let javascriptHint = false;
     let limitReached = false;
     let softWarning: string | undefined;
+    let firstFailure: unknown = null;
 
     while (queue.length > 0) {
       if (Date.now() - startedAt >= config.maxScanDurationMs) {
@@ -242,9 +267,9 @@ export async function crawlWebsiteForEmails(
               }
             }
           } catch (error) {
-            // Seed page hard-fails; secondary pages are skipped.
-            if (item.depth === 0 && scannedPages.length === 0 && discovered.length === 0) {
-              throw error;
+            // Any single page may fail; the site only fails if nothing loads.
+            if (item.depth === 0 && !firstFailure) {
+              firstFailure = error;
             }
             console.info("[email-finder] Skipped page", {
               url: item.url,
@@ -256,6 +281,16 @@ export async function crawlWebsiteForEmails(
           }
         }),
       );
+    }
+
+    if (scannedPages.length === 0) {
+      return {
+        ok: false,
+        error: toFailure(
+          firstFailure ??
+            new SafeFetchError("network_error", "We couldn't access this website."),
+        ),
+      };
     }
 
     if (queue.length > 0 && !limitReached) {

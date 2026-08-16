@@ -7,6 +7,7 @@ import {
 } from "@/features/email-finder/url-security";
 import {
   categorizeEmail,
+  decodeObfuscatedEmails,
   dedupeEmails,
   extractEmailsAndLinks,
   normalizeEmailCandidate,
@@ -36,12 +37,12 @@ describe("url-security", () => {
 
 describe("email extraction", () => {
   it("normalizes and validates emails", () => {
-    expect(normalizeEmailCandidate("HELLO@EXAMPLE.COM")).toBe("hello@example.com");
-    expect(normalizeEmailCandidate("mailto:sales@example.co.uk?subject=Hi")).toBe(
-      "sales@example.co.uk",
+    expect(normalizeEmailCandidate("HELLO@ACME-SHOP.COM")).toBe("hello@acme-shop.com");
+    expect(normalizeEmailCandidate("mailto:sales@acme-shop.co.uk?subject=Hi")).toBe(
+      "sales@acme-shop.co.uk",
     );
-    expect(normalizeEmailCandidate("<john.smith@example.com>;")).toBe(
-      "john.smith@example.com",
+    expect(normalizeEmailCandidate("<john.smith@acme-shop.com>;")).toBe(
+      "john.smith@acme-shop.com",
     );
     expect(normalizeEmailCandidate("not-an-email")).toBeNull();
   });
@@ -55,20 +56,71 @@ describe("email extraction", () => {
   it("extracts mailto links and visible text emails", () => {
     const html = `
       <html><body>
-        <a href="mailto:Hello@Example.com">Email us</a>
-        <p>Reach sales@example.com or support@example.com today.</p>
+        <a href="mailto:Hello@Acme-Shop.com">Email us</a>
+        <p>Reach sales@acme-shop.com or support@acme-shop.com today.</p>
         <a href="/team">Team</a>
         <a href="https://other.com/contact">External</a>
       </body></html>
     `;
-    const extracted = extractEmailsAndLinks(html, "https://example.com/", "example.com");
+    const extracted = extractEmailsAndLinks(
+      html,
+      "https://acme-shop.com/",
+      "acme-shop.com",
+    );
     expect(extracted.emails.map((item) => item.email).sort()).toEqual([
-      "hello@example.com",
-      "sales@example.com",
-      "support@example.com",
+      "hello@acme-shop.com",
+      "sales@acme-shop.com",
+      "support@acme-shop.com",
     ]);
     expect(extracted.links.some((link) => link.href.includes("/team"))).toBe(true);
-    expect(extracted.links.every((link) => link.href.includes("example.com"))).toBe(true);
+    expect(extracted.links.every((link) => link.href.includes("acme-shop.com"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects assets, placeholders, and prose glued to an address", () => {
+    expect(normalizeEmailCandidate("logo@2x.png")).toBeNull();
+    expect(normalizeEmailCandidate("someone@example.com")).toBeNull();
+    expect(normalizeEmailCandidate("hi@sentry.io")).toBeNull();
+    expect(
+      normalizeEmailCandidate("info@shop.comverbraucherstreitbeilegung"),
+    ).toBeNull();
+    expect(normalizeEmailCandidate("info@shop.de")).toBe("info@shop.de");
+  });
+
+  it("decodes Cloudflare-protected addresses", () => {
+    const html =
+      '<a class="__cf_email__" data-cfemail="630a0d050c2302000e064e100b0c134d0706">[email&#160;protected]</a>';
+    const extracted = extractEmailsAndLinks(html, "https://acme-shop.de/", "acme-shop.de");
+    expect(extracted.emails.map((item) => item.email)).toEqual(["info@acme-shop.de"]);
+  });
+
+  it("decodes bracketed obfuscation without matching ordinary prose", () => {
+    expect(decodeObfuscatedEmails("info (at) acme-shop (dot) com")).toEqual([
+      "info@acme-shop.com",
+    ]);
+    expect(decodeObfuscatedEmails("kontakt at acme-shop dot de")).toEqual([
+      "kontakt@acme-shop.de",
+    ]);
+    // German prose: "Daten.Diese" must not become "d@en.diese".
+    expect(decodeObfuscatedEmails("Wir speichern Daten.Diese Angaben")).toEqual([]);
+  });
+
+  it("keeps adjacent blocks apart when reading page text", () => {
+    const html = "<body><p>info@shop.de</p><p>Bei Fragen</p></body>";
+    const extracted = extractEmailsAndLinks(html, "https://shop.de/", "shop.de");
+    expect(extracted.emails.map((item) => item.email)).toEqual(["info@shop.de"]);
+  });
+
+  it("prefers contact pages over cart and product links", () => {
+    const html = `
+      <a href="/pages/contact">Contact</a>
+      <a href="/cart">Cart</a>
+      <a href="/products/shirt">Shirt</a>
+    `;
+    const extracted = extractEmailsAndLinks(html, "https://shop.de/", "shop.de");
+    expect(extracted.links[0].href).toContain("/pages/contact");
+    expect(extracted.links.at(-1)?.href).toMatch(/\/cart|\/products\/shirt/);
   });
 
   it("deduplicates emails", () => {

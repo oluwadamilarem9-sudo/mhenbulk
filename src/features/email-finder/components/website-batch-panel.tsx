@@ -11,10 +11,12 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Copy,
   Download,
   LoaderCircle,
   Pause,
   Play,
+  RefreshCw,
   Search,
   Square,
   Trash2,
@@ -44,9 +46,11 @@ import {
 import {
   cancelWebsiteScanBatchAction,
   createWebsiteScanBatchAction,
+  createWebsiteScanBatchFromTextAction,
   deleteWebsiteScanBatchAction,
   pauseWebsiteScanBatchAction,
   resumeWebsiteScanBatchAction,
+  retryFailedWebsitesAction,
 } from "@/features/email-finder/batch-actions";
 import type {
   EmailFinderBatchDetail,
@@ -97,6 +101,7 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
   const drivingRef = useRef(false);
 
   const [file, setFile] = useState<File | null>(null);
+  const [pasted, setPasted] = useState("");
   const [preview, setPreview] = useState<ParsedWebsiteFile | null>(null);
   const [message, setMessage] = useState<EmailFinderActionState | null>(null);
   const [live, setLive] = useState<{
@@ -219,6 +224,11 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
     return () => window.clearInterval(timer);
   }, [batchId, running, readProgress]);
 
+  const pastedCount = useMemo(
+    () => (pasted.trim() ? parseWebsiteUrlFile(pasted, "pasted.csv").rows.length : 0),
+    [pasted],
+  );
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return results.filter((row) => {
@@ -259,6 +269,18 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  function openQueuedBatch(result: { error?: string; success?: string; batchId?: string }) {
+    if (result.error) {
+      setMessage({ error: result.error });
+      return;
+    }
+    setMessage({ success: result.success });
+    if (result.batchId) {
+      router.push(`/email-finder?batchId=${result.batchId}`);
+    }
+    router.refresh();
+  }
+
   function queueBatch() {
     if (!file) return;
     const formData = new FormData();
@@ -266,16 +288,17 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
 
     startTransition(async () => {
       const result = await createWebsiteScanBatchAction(formData);
-      if (result.error) {
-        setMessage({ error: result.error });
-        return;
-      }
-      cancelPreview();
-      setMessage({ success: result.success });
-      if (result.batchId) {
-        router.push(`/email-finder?batchId=${result.batchId}`);
-      }
-      router.refresh();
+      if (!result.error) cancelPreview();
+      openQueuedBatch(result);
+    });
+  }
+
+  function queuePastedBatch() {
+    const text = pasted;
+    startTransition(async () => {
+      const result = await createWebsiteScanBatchFromTextAction(text);
+      if (!result.error) setPasted("");
+      openQueuedBatch(result);
     });
   }
 
@@ -321,27 +344,52 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values"
-            className="hidden"
-            onChange={(event) =>
-              void handleFileSelected(event.target.files?.[0] ?? null)
-            }
-          />
-          <Button
-            variant="secondary"
-            onClick={() => inputRef.current?.click()}
-            disabled={busy}
-          >
-            <Upload className="h-4 w-4" />
-            Upload website list
-          </Button>
+          <div className="space-y-2">
+            <Label htmlFor="pasted-websites">Paste website addresses</Label>
+            <textarea
+              id="pasted-websites"
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+              rows={4}
+              placeholder={"https://example.com\nexample-shop.de\nanother-site.com"}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <p className="text-xs text-slate-500">
+              {pastedCount > 0
+                ? `${pastedCount.toLocaleString()} unique website${pastedCount === 1 ? "" : "s"} ready`
+                : "One per line, or comma separated. Duplicates are removed automatically."}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={queuePastedBatch} disabled={busy || pastedCount === 0}>
+              <Search className="h-4 w-4" />
+              Start extraction
+            </Button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values"
+              className="hidden"
+              onChange={(event) =>
+                void handleFileSelected(event.target.files?.[0] ?? null)
+              }
+            />
+            <Button
+              variant="secondary"
+              onClick={() => inputRef.current?.click()}
+              disabled={busy}
+            >
+              <Upload className="h-4 w-4" />
+              Import file
+            </Button>
+          </div>
+
           <p className="text-xs text-slate-500">
             A header row is optional — website addresses are detected automatically,
-            so exports with columns such as <code>domain_url</code> work as-is. Up to{" "}
-            {MAX_BATCH_TARGETS.toLocaleString()} websites per upload.
+            so exports with columns such as <code>domain_url</code> work as-is. Each
+            site&apos;s homepage plus its contact, about, and policy pages are checked.
+            Up to {MAX_BATCH_TARGETS.toLocaleString()} websites per list.
           </p>
         </CardContent>
       </Card>
@@ -438,11 +486,8 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
               <div>
                 <CardTitle>{progress.name}</CardTitle>
                 <CardDescription>
-                  {processed} of {progress.totalTargets} websites scanned ·{" "}
-                  {progress.emailsFound} emails found
-                  {progress.failedTargets
-                    ? ` · ${progress.failedTargets} unreachable`
-                    : ""}
+                  Homepage plus contact, about, and policy pages are checked on
+                  every website.
                 </CardDescription>
               </div>
               <Badge
@@ -464,6 +509,20 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
                 className="h-full rounded-full bg-indigo-600 transition-all"
                 style={{ width: `${percent}%` }}
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Scanned", `${processed}/${progress.totalTargets}`],
+                ["Emails found", progress.emailsFound],
+                ["No email", progress.emptyTargets],
+                ["Unreachable", progress.failedTargets],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className="text-lg font-semibold text-slate-900">{value}</p>
+                </div>
+              ))}
             </div>
 
             {ACTIVE_STATUSES.has(progress.status) ? (
@@ -506,6 +565,17 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
                 >
                   <Square className="h-4 w-4" />
                   Stop
+                </Button>
+              ) : null}
+              {progress.failedTargets > 0 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => runAction(() => retryFailedWebsitesAction(batchId))}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Retry {progress.failedTargets} failed
                 </Button>
               ) : null}
               <Button
@@ -639,6 +709,23 @@ export function WebsiteBatchPanel({ batches, detail, draftCampaigns }: Props) {
                   >
                     <Download className="h-4 w-4" />
                     Export CSV
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={selectedRows.length === 0}
+                    onClick={() =>
+                      void navigator.clipboard
+                        .writeText(selectedRows.map((row) => row.email).join("\n"))
+                        .then(() =>
+                          setMessage({
+                            success: `${selectedRows.length} email${selectedRows.length === 1 ? "" : "s"} copied.`,
+                          }),
+                        )
+                    }
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy Selected
                   </Button>
                 </div>
 

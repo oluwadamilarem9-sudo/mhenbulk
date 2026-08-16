@@ -44,15 +44,39 @@ export async function createWebsiteScanBatchAction(
     return { error: "Website lists are limited to 2 MB." };
   }
 
+  return queueWebsites(await file.text(), file.name, file.name);
+}
+
+/** Same flow for URLs typed or pasted straight into the page. */
+export async function createWebsiteScanBatchFromTextAction(
+  text: string,
+): Promise<BatchActionState> {
+  if (typeof text !== "string" || text.trim() === "") {
+    return { error: "Paste at least one website address." };
+  }
+  if (text.length > MAX_FILE_BYTES) {
+    return { error: "Website lists are limited to 2 MB." };
+  }
+
+  const stamp = new Date().toLocaleString();
+  // Parsed as CSV so pasted lists may be newline- or comma-separated.
+  return queueWebsites(text, `Pasted list — ${stamp}`, "pasted.csv");
+}
+
+async function queueWebsites(
+  text: string,
+  name: string,
+  parseAs: string,
+): Promise<BatchActionState> {
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
 
-  const parsed = parseWebsiteUrlFile(await file.text(), file.name);
+  const parsed = parseWebsiteUrlFile(text, parseAs);
   if (parsed.error || parsed.rows.length === 0) {
     return {
       error:
         parsed.error ??
-        "We couldn't find any website addresses in this file.",
+        "We couldn't find any website addresses in this list.",
     };
   }
 
@@ -60,7 +84,7 @@ export async function createWebsiteScanBatchAction(
     .from("email_finder_batches")
     .insert({
       user_id: user.id,
-      name: file.name.slice(0, 200),
+      name: name.slice(0, 200),
       status: "pending",
       total_targets: parsed.rows.length,
     })
@@ -167,6 +191,64 @@ export async function cancelWebsiteScanBatchAction(
 
   revalidatePath("/email-finder");
   return { success: "Scanning stopped.", batchId: parsed.data };
+}
+
+/** Requeues websites that failed, so a list can be retried without re-uploading. */
+export async function retryFailedWebsitesAction(
+  batchId: string,
+): Promise<BatchActionState> {
+  const parsed = batchIdSchema.safeParse(batchId);
+  if (!parsed.success) return { error: "Batch not found." };
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  const { data: retried, error } = await supabase
+    .from("email_finder_batch_targets")
+    .update({
+      status: "queued",
+      attempts: 0,
+      claimed_at: null,
+      error_code: null,
+      error_message: null,
+    })
+    .eq("batch_id", parsed.data)
+    .eq("user_id", user.id)
+    .in("status", ["failed", "skipped"])
+    .select("id");
+
+  if (error) return { error: "Unable to retry these websites." };
+
+  const count = retried?.length ?? 0;
+  if (count === 0) {
+    return { error: "There are no failed websites to retry." };
+  }
+
+  const { data: batch } = await supabase
+    .from("email_finder_batches")
+    .select("processed_targets")
+    .eq("id", parsed.data)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const { error: batchError } = await supabase
+    .from("email_finder_batches")
+    .update({
+      status: "running",
+      failed_targets: 0,
+      processed_targets: Math.max(0, (batch?.processed_targets ?? count) - count),
+      completed_at: null,
+    })
+    .eq("id", parsed.data)
+    .eq("user_id", user.id);
+
+  if (batchError) return { error: "Unable to retry these websites." };
+
+  revalidatePath("/email-finder");
+  return {
+    success: `${count} website${count === 1 ? "" : "s"} queued for another attempt.`,
+    batchId: parsed.data,
+  };
 }
 
 export async function deleteWebsiteScanBatchAction(

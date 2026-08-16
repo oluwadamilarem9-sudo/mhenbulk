@@ -12,12 +12,16 @@ The Cursor Supabase MCP may be connected to a different project. Apply these mig
 
 ## Bulk website scanning
 
-Uploading a list of websites creates a batch of queued targets. Two things drain that queue:
+Pasting or uploading a list of websites creates a batch of queued targets. Two things drain that queue:
 
 - **The open page.** While the Email Finder page is open it repeatedly calls `POST /api/email-finder/batches/{id}/run`, which scans a few sites per call and reports progress.
 - **The background worker.** `GET|POST /api/cron/process-email-finder-queue` does the same work for every active batch, so scanning continues after the page is closed.
 
-Targets are claimed with a conditional update, so the page and the cron worker never scan the same website twice. A crashed run is recovered automatically once its claim goes stale.
+Targets are claimed with a conditional update, so the page and the cron worker never scan the same website twice. A crashed run is recovered automatically once its claim goes stale. Websites that failed can be requeued from the batch card without re-uploading the list.
+
+### What each website scan covers
+
+Every site is crawled from its homepage plus the conventional public contact pages (`/contact`, `/kontakt`, `/impressum`, `/pages/contact`, `/policies/contact-information`, `/about`), with cart, checkout, and product pages deprioritised. Addresses are read from `mailto:` links, visible text, JSON-LD blocks, Cloudflare-obfuscated markup, and `info (at) example (dot) com` style text. A single page failing (oversized, 404, blocked) no longer fails the whole site.
 
 ### Schedule the background worker
 
