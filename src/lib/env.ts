@@ -26,6 +26,30 @@ const serverEnvSchema = publicEnvSchema.extend({
   EMAIL_QUEUE_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(5),
   EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(800),
   MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(3),
+  EMAIL_FINDER_MAX_SCANS_PER_HOUR: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .default(20),
+  EMAIL_FINDER_MAX_PAGES_PER_SCAN: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(25)
+    .default(10),
+  EMAIL_FINDER_REQUEST_TIMEOUT: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(20_000)
+    .default(8_000),
+  EMAIL_FINDER_MAX_RESPONSE_SIZE: z.coerce
+    .number()
+    .int()
+    .min(50_000)
+    .max(2_000_000)
+    .default(1_000_000),
 });
 
 export type PublicEnv = z.infer<typeof publicEnvSchema>;
@@ -82,6 +106,14 @@ export function getServerEnv(): ServerEnv {
     EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "5",
     EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "800",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
+    EMAIL_FINDER_MAX_SCANS_PER_HOUR:
+      unquote(process.env.EMAIL_FINDER_MAX_SCANS_PER_HOUR) || "20",
+    EMAIL_FINDER_MAX_PAGES_PER_SCAN:
+      unquote(process.env.EMAIL_FINDER_MAX_PAGES_PER_SCAN) || "10",
+    EMAIL_FINDER_REQUEST_TIMEOUT:
+      unquote(process.env.EMAIL_FINDER_REQUEST_TIMEOUT) || "8000",
+    EMAIL_FINDER_MAX_RESPONSE_SIZE:
+      unquote(process.env.EMAIL_FINDER_MAX_RESPONSE_SIZE) || "1000000",
   });
 
   if (!parsed.success) {

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   Card,
   CardContent,
@@ -14,7 +16,11 @@ export const metadata = {
   title: "New campaign",
 };
 
-export default async function NewCampaignPage() {
+type PageProps = {
+  searchParams: Promise<{ finderScanId?: string | string[] }>;
+};
+
+export default async function NewCampaignPage({ searchParams }: PageProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -23,6 +29,12 @@ export default async function NewCampaignPage() {
   if (!user) {
     redirect("/login");
   }
+
+  const query = await searchParams;
+  const rawFinderScanId = Array.isArray(query.finderScanId)
+    ? query.finderScanId[0]
+    : query.finderScanId;
+  const finderScanId = z.string().uuid().safeParse(rawFinderScanId);
 
   const [{ accounts }, { data: contacts }] = await Promise.all([
     listEmailAccounts(user.id),
@@ -35,6 +47,43 @@ export default async function NewCampaignPage() {
       .order("created_at", { ascending: false })
       .limit(500),
   ]);
+
+  let preselectedContactIds: string[] = [];
+  if (finderScanId.success) {
+    const { data: selectedResults } = await supabase
+      .from("email_finder_results")
+      .select("contact_id")
+      .eq("user_id", user.id)
+      .eq("scan_id", finderScanId.data)
+      .eq("selected", true)
+      .not("contact_id", "is", null)
+      .limit(500);
+
+    preselectedContactIds = [
+      ...new Set(
+        (selectedResults ?? [])
+          .map((row) => row.contact_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+  }
+
+  const availableContacts = contacts ?? [];
+  // Ensure preselected finder contacts appear even if outside the latest-500 window.
+  if (preselectedContactIds.length) {
+    const present = new Set(availableContacts.map((contact) => contact.id));
+    const missing = preselectedContactIds.filter((id) => !present.has(id));
+    if (missing.length) {
+      const { data: extra } = await supabase
+        .from("contacts")
+        .select("id, first_name, last_name, email")
+        .eq("user_id", user.id)
+        .eq("is_unsubscribed", false)
+        .eq("is_suppressed", false)
+        .in("id", missing);
+      availableContacts.unshift(...(extra ?? []));
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -57,7 +106,12 @@ export default async function NewCampaignPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <CampaignForm emailAccounts={accounts} availableContacts={contacts ?? []} />
+          <CampaignForm
+            emailAccounts={accounts}
+            availableContacts={availableContacts}
+            preselectedContactIds={preselectedContactIds}
+            finderScanId={finderScanId.success ? finderScanId.data : null}
+          />
         </CardContent>
       </Card>
     </div>

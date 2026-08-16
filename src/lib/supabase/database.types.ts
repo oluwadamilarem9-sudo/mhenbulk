@@ -70,6 +70,12 @@ export type EmailAccountStatus =
   | "error"
   | "rate_limited";
 
+export type EmailFinderScanStatus = "running" | "completed" | "partial" | "failed";
+
+export type EmailFinderCategory = "personal" | "business" | "generic";
+
+export type ContactSourceType = "manual" | "csv_import" | "email_finder";
+
 export type Database = {
   public: {
     Tables: {
@@ -114,6 +120,10 @@ export type Database = {
           status: ContactStatus;
           is_unsubscribed: boolean;
           is_suppressed: boolean;
+          source_type: ContactSourceType;
+          source_url: string | null;
+          source_result_id: string | null;
+          discovered_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -130,6 +140,10 @@ export type Database = {
           status?: ContactStatus;
           is_unsubscribed?: boolean;
           is_suppressed?: boolean;
+          source_type?: ContactSourceType;
+          source_url?: string | null;
+          source_result_id?: string | null;
+          discovered_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -146,10 +160,22 @@ export type Database = {
           status?: ContactStatus;
           is_unsubscribed?: boolean;
           is_suppressed?: boolean;
+          source_type?: ContactSourceType;
+          source_url?: string | null;
+          source_result_id?: string | null;
+          discovered_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "contacts_source_result_id_fkey";
+            columns: ["source_result_id"];
+            isOneToOne: false;
+            referencedRelation: "email_finder_results";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       email_accounts: {
         Row: {
@@ -826,6 +852,117 @@ export type Database = {
           },
         ];
       };
+      email_finder_scans: {
+        Row: {
+          id: string;
+          user_id: string;
+          target_url: string;
+          domain: string;
+          status: EmailFinderScanStatus;
+          pages_scanned: number;
+          emails_found: number;
+          limit_reached: boolean;
+          javascript_hint: boolean;
+          error_code: string | null;
+          error_message: string | null;
+          started_at: string;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          target_url: string;
+          domain: string;
+          status?: EmailFinderScanStatus;
+          pages_scanned?: number;
+          emails_found?: number;
+          limit_reached?: boolean;
+          javascript_hint?: boolean;
+          error_code?: string | null;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          target_url?: string;
+          domain?: string;
+          status?: EmailFinderScanStatus;
+          pages_scanned?: number;
+          emails_found?: number;
+          limit_reached?: boolean;
+          javascript_hint?: boolean;
+          error_code?: string | null;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      email_finder_results: {
+        Row: {
+          id: string;
+          user_id: string;
+          scan_id: string;
+          email: string;
+          email_normalized: string;
+          source_url: string;
+          category: EmailFinderCategory;
+          selected: boolean;
+          added_to_contacts: boolean;
+          contact_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          scan_id: string;
+          email: string;
+          email_normalized?: string;
+          source_url: string;
+          category?: EmailFinderCategory;
+          selected?: boolean;
+          added_to_contacts?: boolean;
+          contact_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          scan_id?: string;
+          email?: string;
+          email_normalized?: string;
+          source_url?: string;
+          category?: EmailFinderCategory;
+          selected?: boolean;
+          added_to_contacts?: boolean;
+          contact_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "email_finder_results_scan_id_fkey";
+            columns: ["scan_id"];
+            isOneToOne: false;
+            referencedRelation: "email_finder_scans";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_finder_results_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "contacts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -840,6 +977,8 @@ export type Database = {
       campaign_step_send_mode: CampaignStepSendMode;
       campaign_step_status: CampaignStepStatus;
       campaign_step_audience_mode: CampaignStepAudienceMode;
+      email_finder_scan_status: EmailFinderScanStatus;
+      email_finder_category: EmailFinderCategory;
     };
     CompositeTypes: Record<string, never>;
   };

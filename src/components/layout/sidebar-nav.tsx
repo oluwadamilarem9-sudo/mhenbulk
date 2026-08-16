@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   LayoutDashboard,
   Mail,
+  Search,
   Settings,
   Users,
   type LucideIcon,
@@ -18,6 +19,7 @@ export type NavItem = {
 export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contacts", label: "Contacts", icon: Users },
+  { href: "/email-finder", label: "Email Finder", icon: Search },
   { href: "/campaigns", label: "Campaigns", icon: Mail },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

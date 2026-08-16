@@ -1,0 +1,258 @@
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
+
+import {
+  SafeUrlError,
+  canonicalizeCrawlUrl,
+  validatePublicHttpUrl,
+  type ValidatedTarget,
+} from "@/features/email-finder/url-security";
+
+export type SafeFetchErrorCode =
+  | SafeUrlError["code"]
+  | "timeout"
+  | "too_many_redirects"
+  | "response_too_large"
+  | "unsupported_content_type"
+  | "http_forbidden"
+  | "http_not_found"
+  | "http_rate_limited"
+  | "http_error"
+  | "network_error";
+
+export class SafeFetchError extends Error {
+  readonly code: SafeFetchErrorCode;
+  readonly status?: number;
+
+  constructor(code: SafeFetchErrorCode, message: string, status?: number) {
+    super(message);
+    this.name = "SafeFetchError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export type SafeFetchResult = {
+  url: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  body: string;
+  redirected: boolean;
+};
+
+function createPinnedAgent(addresses: string[]): Agent {
+  const preferred = addresses[0];
+  return new Agent({
+    connect: {
+      // Pin the TCP connection to a previously validated public address.
+      lookup(_hostname, _options, callback) {
+        callback(null, preferred, preferred.includes(":") ? 6 : 4);
+      },
+    },
+  });
+}
+
+async function readLimitedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore cancel failures
+      }
+      throw new SafeFetchError(
+        "response_too_large",
+        "A page was too large to scan safely.",
+      );
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged);
+}
+
+function assertHtmlContentType(contentType: string) {
+  const normalized = contentType.toLowerCase();
+  if (
+    !normalized.includes("text/html") &&
+    !normalized.includes("application/xhtml") &&
+    !normalized.includes("text/plain")
+  ) {
+    throw new SafeFetchError(
+      "unsupported_content_type",
+      "Only HTML pages can be scanned.",
+    );
+  }
+}
+
+function mapHttpStatus(status: number): never {
+  if (status === 403) {
+    throw new SafeFetchError(
+      "http_forbidden",
+      "The website blocked automated requests.",
+      status,
+    );
+  }
+  if (status === 404) {
+    throw new SafeFetchError(
+      "http_not_found",
+      "We couldn't find that page.",
+      status,
+    );
+  }
+  if (status === 429) {
+    throw new SafeFetchError(
+      "http_rate_limited",
+      "The website is rate-limiting requests. Try again later.",
+      status,
+    );
+  }
+  throw new SafeFetchError(
+    "http_error",
+    "We couldn't access this website.",
+    status,
+  );
+}
+
+export async function safeFetchHtml(
+  rawUrl: string,
+  options: {
+    userAgent: string;
+    timeoutMs: number;
+    maxBytes: number;
+    maxRedirects: number;
+  },
+): Promise<SafeFetchResult> {
+  let current = await validatePublicHttpUrl(rawUrl);
+  let redirected = false;
+
+  for (let hop = 0; hop <= options.maxRedirects; hop++) {
+    const agent = createPinnedAgent(current.addresses);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+
+    let response: Response;
+    try {
+      const init: UndiciRequestInit = {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1",
+          "Accept-Language": "en-US,en;q=0.8",
+          "User-Agent": options.userAgent,
+        },
+        dispatcher: agent,
+      };
+      response = (await undiciFetch(current.href, init)) as unknown as Response;
+    } catch (error) {
+      if (error instanceof SafeUrlError) {
+        throw new SafeFetchError(error.code, error.message);
+      }
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.message.includes("aborted"))
+      ) {
+        throw new SafeFetchError(
+          "timeout",
+          "The website took too long to respond.",
+        );
+      }
+      throw new SafeFetchError(
+        "network_error",
+        "We couldn't access this website.",
+      );
+    } finally {
+      clearTimeout(timer);
+      void agent.close();
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new SafeFetchError(
+          "network_error",
+          "We couldn't access this website.",
+          response.status,
+        );
+      }
+      if (hop >= options.maxRedirects) {
+        throw new SafeFetchError(
+          "too_many_redirects",
+          "The website redirected too many times.",
+        );
+      }
+      const nextHref = canonicalizeCrawlUrl(location, current.href);
+      if (!nextHref) {
+        throw new SafeFetchError("invalid_url", "The website redirected to an invalid URL.");
+      }
+      current = await validatePublicHttpUrl(nextHref);
+      redirected = true;
+      continue;
+    }
+
+    if (response.status >= 400) {
+      mapHttpStatus(response.status);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    assertHtmlContentType(contentType);
+    const body = await readLimitedBody(response, options.maxBytes);
+
+    return {
+      url: rawUrl,
+      finalUrl: current.href,
+      status: response.status,
+      contentType,
+      body,
+      redirected,
+    };
+  }
+
+  throw new SafeFetchError(
+    "too_many_redirects",
+    "The website redirected too many times.",
+  );
+}
+
+export async function safeFetchText(
+  target: ValidatedTarget,
+  options: {
+    userAgent: string;
+    timeoutMs: number;
+    maxBytes: number;
+    maxRedirects: number;
+  },
+): Promise<string | null> {
+  try {
+    const result = await safeFetchHtml(target.href, options);
+    return result.body;
+  } catch (error) {
+    if (
+      error instanceof SafeFetchError &&
+      (error.code === "http_not_found" || error.code === "unsupported_content_type")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}

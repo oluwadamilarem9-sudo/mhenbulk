@@ -5,7 +5,13 @@ import { getPublicEnv, hasPublicSupabaseConfig } from "@/lib/env";
 import type { Database } from "@/lib/supabase/database.types";
 
 const AUTH_ROUTES = new Set(["/login", "/signup"]);
-const PROTECTED_PREFIXES = ["/dashboard", "/contacts", "/campaigns", "/settings"];
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/contacts",
+  "/email-finder",
+  "/campaigns",
+  "/settings",
+];
 
 function isProtectedPath(pathname: string): boolean {
   return PROTECTED_PREFIXES.some(

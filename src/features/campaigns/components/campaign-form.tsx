@@ -30,16 +30,21 @@ type CampaignFormProps = {
     last_name: string;
     email: string;
   }>;
+  preselectedContactIds?: string[];
+  finderScanId?: string | null;
 };
 
 export function CampaignForm({
   campaign,
   emailAccounts,
   availableContacts = [],
+  preselectedContactIds = [],
+  finderScanId = null,
 }: CampaignFormProps) {
   const router = useRouter();
   const action = campaign ? updateCampaignAction : createCampaignAction;
   const [state, formAction, pending] = useActionState(action, initialState);
+  const preselected = new Set(preselectedContactIds);
 
   return (
     <form action={formAction} className="space-y-5">
@@ -138,9 +143,13 @@ export function CampaignForm({
             Initial recipients <span className="font-normal text-slate-400">(optional)</span>
           </legend>
           <p className="text-xs text-slate-500">
-            Choose existing eligible contacts now, or add/import recipients after
-            creating the campaign.
+            {finderScanId
+              ? "Contacts from Email Finder are pre-selected below. You can adjust the list before creating the campaign."
+              : "Choose existing eligible contacts now, or add/import recipients after creating the campaign."}
           </p>
+          {finderScanId ? (
+            <input type="hidden" name="finderScanId" value={finderScanId} />
+          ) : null}
           <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
             {availableContacts.length ? (
               availableContacts.map((contact) => (
@@ -148,7 +157,12 @@ export function CampaignForm({
                   key={contact.id}
                   className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-slate-50"
                 >
-                  <input type="checkbox" name="contactIds" value={contact.id} />
+                  <input
+                    type="checkbox"
+                    name="contactIds"
+                    value={contact.id}
+                    defaultChecked={preselected.has(contact.id)}
+                  />
                   <span className="min-w-0">
                     <span className="block font-medium text-slate-900">
                       {contactDisplayName(contact.first_name, contact.last_name) ||

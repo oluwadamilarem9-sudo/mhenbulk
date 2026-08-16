@@ -26,6 +26,14 @@ Users connect their **own Gmail account** via Google OAuth. Campaign emails are 
 - Duplicate prevention via normalized-email unique constraint
 - Status/suppression dual-write; bounce/complaint suppressions stay protected
 
+### Email Finder
+- Enter a public website URL and discover emails that are already visible on public pages
+- Same-host bounded crawl (homepage + contact/about/team-style pages)
+- SSRF protections, robots.txt respect, rate limits, and source URL tracking
+- Select results → add to Contacts, enroll in a draft Campaign, or create a new campaign
+- Export selected results as CSV
+- Scan history per user (RLS-scoped)
+
 ### Campaigns
 - Create/edit campaigns with name, optional subject, HTML and plain-text content
 - **Sending account** dropdown (connected Gmail only — no typed From spoofing)
