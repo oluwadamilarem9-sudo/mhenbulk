@@ -50,6 +50,8 @@ type Props = {
   campaignId: string;
   campaignTimezone: string;
   isDraft: boolean;
+  /** Batches stay addable after launch so an audience can be released gradually. */
+  canAddBatches: boolean;
   members: CampaignMember[];
   eligibleContacts: EligibleCampaignContact[];
   batches: CampaignBatchOption[];
@@ -62,6 +64,7 @@ export function CampaignRecipientsPanel({
   campaignId,
   campaignTimezone,
   isDraft,
+  canAddBatches,
   members,
   eligibleContacts,
   batches,
@@ -184,7 +187,7 @@ export function CampaignRecipientsPanel({
               each one below.
             </p>
           </div>
-          {isDraft ? (
+          {canAddBatches ? (
             <Button
               size="sm"
               disabled={busy || selectedBatches.size === 0}
@@ -212,7 +215,7 @@ export function CampaignRecipientsPanel({
                 className="rounded-lg border border-slate-200 px-3 py-2"
               >
                 <div className="flex items-center gap-3">
-                  {isDraft && !batch.linked ? (
+                  {canAddBatches && !batch.linked ? (
                     <input
                       type="checkbox"
                       checked={selectedBatches.has(batch.id)}

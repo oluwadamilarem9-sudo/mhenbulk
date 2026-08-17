@@ -9,7 +9,8 @@ limits.
 
 Apply `supabase/migrations/0008_smart_batching.sql` after migrations 0001–0007,
 then `0009_fix_smart_batch_enrollment.sql`, which repairs the enrollment function
-shipped in 0008.
+shipped in 0008, then `0010_batch_sending_after_first_batch.sql`, which lets a
+campaign accept and queue further batches after its first batch finishes.
 
 The migration adds:
 
@@ -38,6 +39,9 @@ grouping and memberships.
 6. The existing Gmail queue worker rechecks eligibility, sends sequentially at
    the configured rate, updates progress, and preserves batch attribution for
    follow-ups.
+7. When a batch drains the queue the campaign is marked completed. Adding or
+   queueing another batch reopens it, so an audience can be released over days
+   without creating a second campaign. Cancelled campaigns stay closed.
 
 ## Provider limits
 

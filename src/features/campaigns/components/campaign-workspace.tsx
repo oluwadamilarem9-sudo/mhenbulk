@@ -328,6 +328,7 @@ export function CampaignWorkspace({
           campaignId={campaign.id}
           campaignTimezone={campaign.timezone}
           isDraft={isDraft}
+          canAddBatches={campaign.status !== "cancelled"}
           members={data.members}
           eligibleContacts={data.eligibleContacts}
           batches={data.batches}
