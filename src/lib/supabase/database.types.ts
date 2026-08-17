@@ -1364,6 +1364,16 @@ export type Database = {
         };
         Returns: Json;
       };
+      queue_campaign_batches: {
+        Args: {
+          p_campaign_id: string;
+          p_batch_ids: string[];
+          p_scheduled_at?: string | null;
+          p_timezone?: string;
+          p_max_attempts?: number;
+        };
+        Returns: Json;
+      };
     };
     Enums: {
       campaign_status: CampaignStatus;

@@ -67,8 +67,8 @@ Each run:
 
 1. Resumes campaigns paused for Gmail rate limits when the cooldown expired
 2. Processes up to 10 `sending` campaigns
-3. Sends a small batch per campaign (`EMAIL_QUEUE_BATCH_SIZE`, default 5)
-4. Spaces sends (`EMAIL_SEND_DELAY_MS`, default 800ms)
+3. Sends an active queue slice per campaign (`EMAIL_QUEUE_BATCH_SIZE`, default 20)
+4. Spaces Gmail API calls (`EMAIL_SEND_DELAY_MS`, default 350ms)
 5. Retries temporary failures (`MAX_RETRIES`, default 3)
 6. Pauses on Gmail auth failure or quota/rate-limit responses
 

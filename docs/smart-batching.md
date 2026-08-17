@@ -10,7 +10,9 @@ limits.
 Apply `supabase/migrations/0008_smart_batching.sql` after migrations 0001–0007,
 then `0009_fix_smart_batch_enrollment.sql`, which repairs the enrollment function
 shipped in 0008, then `0010_batch_sending_after_first_batch.sql`, which lets a
-campaign accept and queue further batches after its first batch finishes.
+campaign accept and queue further batches after its first batch finishes, then
+`0011_queue_multiple_campaign_batches.sql`, which atomically queues selected or
+all ready batches.
 
 The migration adds:
 
@@ -42,6 +44,9 @@ grouping and memberships.
 7. When a batch drains the queue the campaign is marked completed. Adding or
    queueing another batch reopens it, so an audience can be released over days
    without creating a second campaign. Cancelled campaigns stay closed.
+8. Ready batches can be sent individually, as a selection, or all at once.
+   "All at once" queues them together; one Gmail account still sends
+   sequentially to preserve ordering and provider safety.
 
 ## Provider limits
 
@@ -63,3 +68,8 @@ paused Smart Batch still requires an explicit batch resume.
 
 `EMAIL_QUEUE_BATCH_SIZE` is worker throughput, not a Gmail quota and not the
 user-facing Smart Batch size.
+
+The production defaults claim 20 rows per request and wait 350ms between Gmail
+API calls. The campaign page pumps the next slice every second without
+overlapping requests. The first slice starts inside the queue action, so sending
+does not wait for a page refresh or the background cron.

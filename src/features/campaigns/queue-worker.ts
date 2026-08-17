@@ -841,7 +841,10 @@ export async function processCampaignQueueBatch(
       failed++;
     }
 
-    await sleep(sendDelayMs);
+    // No throttle is needed after the final row in this worker slice.
+    if (sendDelayMs > 0 && recipient !== batch[batch.length - 1]) {
+      await sleep(sendDelayMs);
+    }
   }
 
   await finalizeFinishedSteps(

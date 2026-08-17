@@ -75,7 +75,10 @@ export function CampaignWorkspace({
   useEffect(() => {
     if (!isSending) return;
     void runQueueBatch();
-    const interval = window.setInterval(() => void runQueueBatch(), 4000);
+    // Keep the queue active while this workspace is open. The in-flight guard
+    // prevents overlapping workers; the short tick removes idle gaps between
+    // completed queue slices.
+    const interval = window.setInterval(() => void runQueueBatch(), 1000);
     return () => window.clearInterval(interval);
   }, [isSending, runQueueBatch]);
 

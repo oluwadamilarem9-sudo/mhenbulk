@@ -23,9 +23,9 @@ const serverEnvSchema = publicEnvSchema.extend({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
   EMAIL_ACCOUNT_ENCRYPTION_KEY: z.string().optional(),
-  EMAIL_QUEUE_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(5),
+  EMAIL_QUEUE_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(20),
   EMAIL_QUEUE_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(1),
-  EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(800),
+  EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(350),
   MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(3),
   EMAIL_FINDER_MAX_SCANS_PER_HOUR: z.coerce
     .number()
@@ -104,10 +104,10 @@ export function getServerEnv(): ServerEnv {
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
     EMAIL_ACCOUNT_ENCRYPTION_KEY: process.env.EMAIL_ACCOUNT_ENCRYPTION_KEY,
-    EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "5",
+    EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "20",
     EMAIL_QUEUE_CONCURRENCY:
       unquote(process.env.EMAIL_QUEUE_CONCURRENCY) || "1",
-    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "800",
+    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "350",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
     EMAIL_FINDER_MAX_SCANS_PER_HOUR:
       unquote(process.env.EMAIL_FINDER_MAX_SCANS_PER_HOUR) || "20",
@@ -134,9 +134,9 @@ export function hasPublicSupabaseConfig(): boolean {
 
 export function getQueueConfig() {
   return {
-    batchSize: Number(process.env.EMAIL_QUEUE_BATCH_SIZE || 5),
+    batchSize: Number(process.env.EMAIL_QUEUE_BATCH_SIZE || 20),
     concurrency: Number(process.env.EMAIL_QUEUE_CONCURRENCY || 1),
-    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 800),
+    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 350),
     maxRetries: Number(process.env.MAX_RETRIES || 3),
   };
 }

@@ -5,6 +5,7 @@ import {
   Boxes,
   CalendarClock,
   ExternalLink,
+  ListChecks,
   Pause,
   Play,
   Search,
@@ -43,6 +44,7 @@ import {
   addBatchesToCampaignAction,
   createContactBatchesAction,
   queueCampaignBatchAction,
+  queueCampaignBatchesAction,
   setCampaignBatchPausedAction,
 } from "@/features/smart-batching/actions";
 
@@ -75,6 +77,9 @@ export function CampaignRecipientsPanel({
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
+  const [selectedReadyBatches, setSelectedReadyBatches] = useState<Set<string>>(
+    new Set(),
+  );
   const [scheduleBatch, setScheduleBatch] = useState<CampaignBatchOption | null>(
     null,
   );
@@ -104,6 +109,10 @@ export function CampaignRecipientsPanel({
       `${member.firstName} ${member.lastName} ${member.email}`.toLowerCase().includes(query),
     );
   }, [members, search]);
+  const readyBatches = useMemo(
+    () => batches.filter((batch) => batch.linked && batch.status === "ready"),
+    [batches],
+  );
 
   function run(action: () => Promise<CampaignActionState>) {
     startTransition(async () => {
@@ -126,6 +135,32 @@ export function CampaignRecipientsPanel({
 
   function setBatchPaused(campaignBatchId: string, paused: boolean) {
     run(() => setCampaignBatchPausedAction(campaignBatchId, paused));
+  }
+
+  function sendBatches(batchIds: string[]) {
+    const selectedRows = readyBatches.filter((batch) => batchIds.includes(batch.id));
+    const contacts = selectedRows.reduce(
+      (total, batch) => total + batch.totalContacts,
+      0,
+    );
+    if (
+      !window.confirm(
+        `Send ${selectedRows.length} batch${
+          selectedRows.length === 1 ? "" : "es"
+        } with up to ${contacts} emails now?`,
+      )
+    ) {
+      return;
+    }
+    run(async () => {
+      const result = await queueCampaignBatchesAction({
+        campaignId,
+        batchIds,
+        timezone: campaignTimezone,
+      });
+      if (!result.error) setSelectedReadyBatches(new Set());
+      return result;
+    });
   }
 
   async function previewImport(file: File | null) {
@@ -187,25 +222,54 @@ export function CampaignRecipientsPanel({
               each one below.
             </p>
           </div>
-          {canAddBatches ? (
-            <Button
-              size="sm"
-              disabled={busy || selectedBatches.size === 0}
-              onClick={() =>
-                run(async () => {
-                  const result = await addBatchesToCampaignAction(campaignId, [
-                    ...selectedBatches,
-                  ]);
-                  if (!result.error) setSelectedBatches(new Set());
-                  return result;
-                })
-              }
-            >
-              <UserPlus className="h-4 w-4" />
-              Add {selectedBatches.size || ""} batch
-              {selectedBatches.size === 1 ? "" : "es"}
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {readyBatches.length > 0 ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy || selectedReadyBatches.size === 0}
+                  onClick={() => sendBatches([...selectedReadyBatches])}
+                >
+                  <ListChecks className="h-4 w-4" />
+                  Send selected
+                  {selectedReadyBatches.size > 0
+                    ? ` (${selectedReadyBatches.size})`
+                    : ""}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    sendBatches(readyBatches.map((batch) => batch.id))
+                  }
+                >
+                  <Play className="h-4 w-4" />
+                  Send all ready ({readyBatches.length})
+                </Button>
+              </>
+            ) : null}
+            {canAddBatches ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy || selectedBatches.size === 0}
+                onClick={() =>
+                  run(async () => {
+                    const result = await addBatchesToCampaignAction(campaignId, [
+                      ...selectedBatches,
+                    ]);
+                    if (!result.error) setSelectedBatches(new Set());
+                    return result;
+                  })
+                }
+              >
+                <UserPlus className="h-4 w-4" />
+                Add {selectedBatches.size || ""} batch
+                {selectedBatches.size === 1 ? "" : "es"}
+              </Button>
+            ) : null}
+          </div>
         </div>
         {batches.length ? (
           <div className="grid gap-2 md:grid-cols-2">
@@ -215,7 +279,21 @@ export function CampaignRecipientsPanel({
                 className="rounded-lg border border-slate-200 px-3 py-2"
               >
                 <div className="flex items-center gap-3">
-                  {canAddBatches && !batch.linked ? (
+                  {batch.linked && batch.status === "ready" ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedReadyBatches.has(batch.id)}
+                      onChange={() =>
+                        setSelectedReadyBatches((current) => {
+                          const next = new Set(current);
+                          if (next.has(batch.id)) next.delete(batch.id);
+                          else next.add(batch.id);
+                          return next;
+                        })
+                      }
+                      aria-label={`Select ${batch.name} to send`}
+                    />
+                  ) : canAddBatches && !batch.linked ? (
                     <input
                       type="checkbox"
                       checked={selectedBatches.has(batch.id)}

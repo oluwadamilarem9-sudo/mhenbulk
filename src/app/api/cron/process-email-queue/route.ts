@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const CAMPAIGNS_PER_RUN = 10;
+const WORKER_TIME_BUDGET_MS = 40_000;
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -170,12 +171,22 @@ async function handleWorkerRequest(request: Request) {
         while (nextGroup < accountGroups.length) {
           const group = accountGroups[nextGroup++];
           for (const campaign of group) {
-            const result = await processCampaignQueueBatch(
-              supabase,
-              campaign.user_id,
-              campaign.id,
-            );
-            results.push({ campaignId: campaign.id, ...result });
+            let keepPumping = true;
+            while (
+              keepPumping &&
+              Date.now() - startedAt < WORKER_TIME_BUDGET_MS
+            ) {
+              const result = await processCampaignQueueBatch(
+                supabase,
+                campaign.user_id,
+                campaign.id,
+              );
+              results.push({ campaignId: campaign.id, ...result });
+              keepPumping =
+                !result.error &&
+                (result.processed ?? 0) > 0 &&
+                (result.remaining ?? 0) > 0;
+            }
           }
         }
       },
@@ -194,15 +205,18 @@ async function handleWorkerRequest(request: Request) {
     { processed: 0, sent: 0, failed: 0, skipped: 0, retriesScheduled: 0 },
   );
 
+  const campaignCount = new Set(results.map((result) => result.campaignId)).size;
   console.info("[queue-worker] Run completed", {
-    campaigns: results.length,
+    campaigns: campaignCount,
+    slices: results.length,
     ...summary,
     durationMs: Date.now() - startedAt,
   });
 
   return Response.json({
     ok: true,
-    campaigns: results.length,
+    campaigns: campaignCount,
+    slices: results.length,
     ...summary,
     durationMs: Date.now() - startedAt,
     results,

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { processCampaignQueueBatch } from "@/features/campaigns/queue-worker";
 import { getQueueConfig } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -32,6 +33,38 @@ async function requireUser() {
     data: { user },
   } = await supabase.auth.getUser();
   return { supabase, user };
+}
+
+async function validateCampaignSender(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  campaignId: string,
+): Promise<string | undefined> {
+  const { data: campaign } = await supabase
+    .from("campaigns")
+    .select("email_account_id")
+    .eq("id", campaignId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!campaign?.email_account_id) {
+    return "Choose a connected Gmail account for this campaign first.";
+  }
+  const { data: account } = await supabase
+    .from("email_accounts")
+    .select("status")
+    .eq("id", campaign.email_account_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (
+    !account ||
+    account.status === "needs_reauth" ||
+    account.status === "disconnected"
+  ) {
+    return "Your Gmail account needs to be reconnected.";
+  }
+  if (account.status === "rate_limited") {
+    return "Gmail reported a sending limit. The selected batches remain paused until the account is available.";
+  }
 }
 
 function rpcError(
@@ -280,30 +313,12 @@ export async function queueCampaignBatchAction(input: {
 
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
-  const { data: campaign } = await supabase
-    .from("campaigns")
-    .select("email_account_id")
-    .eq("id", parsed.data.campaignId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!campaign?.email_account_id) {
-    return { error: "Choose a connected Gmail account for this campaign first." };
-  }
-  const { data: account } = await supabase
-    .from("email_accounts")
-    .select("status")
-    .eq("id", campaign.email_account_id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!account || account.status === "needs_reauth" || account.status === "disconnected") {
-    return { error: "Your Gmail account needs to be reconnected." };
-  }
-  if (account.status === "rate_limited") {
-    return {
-      error:
-        "Gmail reported a sending limit. This batch remains paused until the account is available.",
-    };
-  }
+  const senderError = await validateCampaignSender(
+    supabase,
+    user.id,
+    parsed.data.campaignId,
+  );
+  if (senderError) return { error: senderError };
 
   const { maxRetries } = getQueueConfig();
   const { data, error } = await supabase.rpc("queue_campaign_batch", {
@@ -315,14 +330,101 @@ export async function queueCampaignBatchAction(input: {
   });
   if (error) return { error: rpcError(error, "Unable to queue this batch.") };
   const result = (data ?? {}) as { queued?: number };
+  let firstRunError: string | undefined;
+  if (!parsed.data.scheduledAt) {
+    // Start the queue immediately; the page pump and background cron continue it.
+    const firstRun = await processCampaignQueueBatch(
+      supabase,
+      user.id,
+      parsed.data.campaignId,
+    );
+    firstRunError = firstRun.error;
+  }
   revalidatePath(`/campaigns/${parsed.data.campaignId}`);
   revalidatePath(`/batches/${parsed.data.batchId}`);
   revalidatePath("/contacts");
   return {
     queued: result.queued ?? 0,
-    success: parsed.data.scheduledAt
-      ? `${result.queued ?? 0} emails scheduled through the existing queue.`
-      : `${result.queued ?? 0} emails queued for controlled sending.`,
+    error: firstRunError
+      ? `${result.queued ?? 0} emails were queued, but sending paused: ${firstRunError}`
+      : undefined,
+    success: firstRunError
+      ? undefined
+      : parsed.data.scheduledAt
+        ? `${result.queued ?? 0} emails scheduled through the existing queue.`
+        : `${result.queued ?? 0} emails queued and sending now.`,
+  };
+}
+
+export async function queueCampaignBatchesAction(input: {
+  campaignId: string;
+  batchIds: string[];
+  timezone?: string;
+}): Promise<SmartBatchActionState> {
+  const parsed = z
+    .object({
+      campaignId: uuid,
+      batchIds: z.array(uuid).min(1).max(200),
+      timezone: z.string().trim().min(1).max(100).default("UTC"),
+    })
+    .safeParse({ ...input, batchIds: [...new Set(input.batchIds)] });
+  if (!parsed.success) {
+    return { error: "Select at least one ready batch to send." };
+  }
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+  const senderError = await validateCampaignSender(
+    supabase,
+    user.id,
+    parsed.data.campaignId,
+  );
+  if (senderError) return { error: senderError };
+
+  const { maxRetries } = getQueueConfig();
+  const { data, error } = await supabase.rpc("queue_campaign_batches", {
+    p_campaign_id: parsed.data.campaignId,
+    p_batch_ids: parsed.data.batchIds,
+    p_scheduled_at: null,
+    p_timezone: parsed.data.timezone,
+    p_max_attempts: maxRetries,
+  });
+  if (error) {
+    return {
+      error: rpcError(error, "Unable to queue the selected batches."),
+    };
+  }
+
+  const result = (data ?? {}) as {
+    queued?: number;
+    batches_queued?: number;
+    batches_skipped?: number;
+  };
+  // Deliver the first queue slice in this request instead of waiting for the
+  // next browser refresh or minute cron.
+  const firstRun = await processCampaignQueueBatch(
+    supabase,
+    user.id,
+    parsed.data.campaignId,
+  );
+  revalidatePath(`/campaigns/${parsed.data.campaignId}`);
+  revalidatePath("/contacts");
+  return {
+    queued: result.queued ?? 0,
+    error: firstRun.error
+      ? `${result.queued ?? 0} emails were queued, but sending paused: ${firstRun.error}`
+      : undefined,
+    success: firstRun.error
+      ? undefined
+      : `${result.queued ?? 0} emails from ${
+          result.batches_queued ?? parsed.data.batchIds.length
+        } batches queued and sending now.${
+          result.batches_skipped
+            ? ` ${result.batches_skipped} fully duplicated batch${
+                result.batches_skipped === 1 ? " was" : "es were"
+              } skipped.`
+            : ""
+        }`,
   };
 }
 
