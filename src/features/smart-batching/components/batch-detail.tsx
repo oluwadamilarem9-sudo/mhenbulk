@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   ArrowLeft,
   CalendarClock,
@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { processQueueBatchAction } from "@/features/campaigns/queue-actions";
 import {
   queueCampaignBatchAction,
   removeContactFromBatchAction,
@@ -39,6 +40,7 @@ function csvCell(value: string | null) {
 
 export function BatchDetail({ detail }: Props) {
   const router = useRouter();
+  const processingRef = useRef(false);
   const [search, setSearch] = useState("");
   const [scheduleFor, setScheduleFor] = useState<SmartBatchCampaign | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
@@ -61,6 +63,15 @@ export function BatchDetail({ detail }: Props) {
         .includes(query),
     );
   }, [detail.contacts, search]);
+  const activeCampaignIds = useMemo(
+    () =>
+      detail.batch.campaigns
+        .filter((campaign) =>
+          ["processing", "scheduled"].includes(campaign.status),
+        )
+        .map((campaign) => campaign.campaignId),
+    [detail.batch.campaigns],
+  );
 
   function run(action: () => Promise<{ error?: string; success?: string }>) {
     setMessage(null);
@@ -73,6 +84,39 @@ export function BatchDetail({ detail }: Props) {
       if (!result.error) router.refresh();
     });
   }
+
+  useEffect(() => {
+    if (activeCampaignIds.length === 0) return;
+
+    let cancelled = false;
+
+    async function pumpQueue() {
+      if (processingRef.current || cancelled) return;
+      processingRef.current = true;
+      try {
+        let shouldRefresh = false;
+        for (const campaignId of activeCampaignIds) {
+          const result = await processQueueBatchAction(campaignId);
+          if (result.error) {
+            setMessage({ kind: "error", text: result.error });
+          }
+          if ((result.processed ?? 0) > 0 || (result.remaining ?? 0) >= 0) {
+            shouldRefresh = true;
+          }
+        }
+        if (!cancelled && shouldRefresh) router.refresh();
+      } finally {
+        processingRef.current = false;
+      }
+    }
+
+    void pumpQueue();
+    const interval = window.setInterval(() => void pumpQueue(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeCampaignIds, router]);
 
   function exportCsv() {
     const lines = [
