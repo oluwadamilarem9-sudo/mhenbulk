@@ -258,6 +258,62 @@ export async function removeContactFromBatchAction(
   return { success: "Removed from batch. The contact remains in Contacts." };
 }
 
+export async function copyContactBatchEmailsAction(
+  batchIds: string[],
+): Promise<{ error?: string; text?: string; count?: number }> {
+  const parsed = z
+    .object({ batchIds: z.array(uuid).min(1).max(200) })
+    .safeParse({ batchIds: [...new Set(batchIds)] });
+  if (!parsed.success) {
+    return { error: "Select at least one batch to copy." };
+  }
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  const { data: ownedBatches } = await supabase
+    .from("contact_batches")
+    .select("id")
+    .eq("user_id", user.id)
+    .in("id", parsed.data.batchIds);
+  const ownedIds = new Set((ownedBatches ?? []).map((batch) => batch.id));
+  if (ownedIds.size === 0) {
+    return { error: "No matching batches were found." };
+  }
+
+  const orderedIds = parsed.data.batchIds.filter((id) => ownedIds.has(id));
+  const emails: string[] = [];
+  const seen = new Set<string>();
+
+  for (const batchId of orderedIds) {
+    const { data: members, error } = await supabase
+      .from("contact_batch_members")
+      .select("position, contacts!inner(email, email_normalized)")
+      .eq("batch_id", batchId)
+      .eq("user_id", user.id)
+      .order("position", { ascending: true });
+    if (error) {
+      return { error: "Unable to load emails from the selected batches." };
+    }
+    for (const member of members ?? []) {
+      const contact = Array.isArray(member.contacts)
+        ? member.contacts[0]
+        : member.contacts;
+      if (!contact?.email) continue;
+      const normalized = (contact.email_normalized ?? contact.email).toLowerCase();
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      emails.push(contact.email);
+    }
+  }
+
+  if (emails.length === 0) {
+    return { error: "No emails were found in the selected batches." };
+  }
+
+  return { text: emails.join("\n"), count: emails.length };
+}
+
 export async function addBatchesToCampaignAction(
   campaignId: string,
   batchIds: string[],

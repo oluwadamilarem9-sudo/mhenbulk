@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   Boxes,
+  Copy,
   ExternalLink,
   Pencil,
   Plus,
@@ -20,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   addBatchesToCampaignAction,
+  copyContactBatchEmailsAction,
   deleteContactBatchAction,
   renameContactBatchAction,
   saveDefaultBatchSizeAction,
@@ -84,6 +86,34 @@ export function SmartBatchesPanel({
         text: result.error ?? result.success ?? "Saved.",
       });
       if (!result.error) router.refresh();
+    });
+  }
+
+  function copySelectedEmails() {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await copyContactBatchEmailsAction([...selected]);
+      if (result.error || !result.text) {
+        setMessage({
+          kind: "error",
+          text: result.error ?? "Unable to copy emails.",
+        });
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(result.text);
+        setMessage({
+          kind: "success",
+          text: `Copied ${result.count ?? 0} email${
+            result.count === 1 ? "" : "s"
+          } to your clipboard.`,
+        });
+      } catch {
+        setMessage({
+          kind: "error",
+          text: "Your browser blocked clipboard access. Try again or copy from batch export.",
+        });
+      }
     });
   }
 
@@ -172,6 +202,10 @@ export function SmartBatchesPanel({
               </option>
             ))}
           </select>
+          <Button size="sm" variant="secondary" disabled={pending} onClick={copySelectedEmails}>
+            <Copy className="h-4 w-4" />
+            Copy emails
+          </Button>
           <Button
             size="sm"
             disabled={pending || !campaignId}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   ArrowLeft,
   CalendarClock,
+  Copy,
   Download,
   Pause,
   Play,
@@ -142,6 +143,30 @@ export function BatchDetail({ detail }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  async function copyEmails() {
+    const emails = detail.contacts
+      .map((contact) => contact.email)
+      .filter((email): email is string => Boolean(email));
+    if (!emails.length) {
+      setMessage({ kind: "error", text: "No emails to copy." });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(emails.join("\n"));
+      setMessage({
+        kind: "success",
+        text: `Copied ${emails.length} email${
+          emails.length === 1 ? "" : "s"
+        } to your clipboard.`,
+      });
+    } catch {
+      setMessage({
+        kind: "error",
+        text: "Your browser blocked clipboard access. Try again or use Export CSV.",
+      });
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -161,10 +186,16 @@ export function BatchDetail({ detail }: Props) {
               {detail.counts.total} contacts · batch size {detail.batch.batch_size}
             </p>
           </div>
-          <Button variant="secondary" onClick={exportCsv}>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={copyEmails}>
+              <Copy className="h-4 w-4" />
+              Copy emails
+            </Button>
+            <Button variant="secondary" onClick={exportCsv}>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+          </div>
         </div>
       </div>
 
