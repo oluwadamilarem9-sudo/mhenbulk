@@ -16,7 +16,10 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 const RETRY_BASE_DELAY_MS = 60_000;
-const CLAIM_LEASE_MS = 15 * 60_000;
+// Long enough for a Gmail round-trip to finish, short enough that a killed
+// serverless request does not freeze the queue for a quarter of an hour.
+const CLAIM_LEASE_MS = 2 * 60_000;
+const STOP_CLAIMING_BEFORE_DEADLINE_MS = 1_500;
 
 type AppSupabaseClient = SupabaseClient<Database>;
 
@@ -287,8 +290,14 @@ export async function processCampaignQueueBatch(
   supabase: AppSupabaseClient,
   userId: string,
   campaignId: string,
+  options?: { deadlineAt?: number },
 ): Promise<QueueBatchResult> {
   const { batchSize, sendDelayMs } = getQueueConfig();
+  const shouldStopClaiming = () =>
+    Boolean(
+      options?.deadlineAt &&
+        Date.now() >= options.deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS,
+    );
 
   const { data: campaign } = await supabase
     .from("campaigns")
@@ -518,6 +527,10 @@ export async function processCampaignQueueBatch(
   let retriesScheduled = 0;
 
   for (const recipient of batch) {
+    if (shouldStopClaiming()) {
+      break;
+    }
+
     // Re-check campaign is still sending (may have been paused mid-batch).
     const { data: liveCampaign } = await supabase
       .from("campaigns")
@@ -936,4 +949,100 @@ export async function processCampaignQueueBatch(
     remaining: remainingCount ?? 0,
     campaignStatus,
   };
+}
+
+export const USER_QUEUE_DRAIN_BUDGET_MS = 8_000;
+
+export type QueueDrainResult = QueueBatchResult & {
+  hasMore: boolean;
+  campaignId?: string;
+};
+
+/**
+ * Keeps sending until the time budget is spent or the user's due queue is empty.
+ * Used by the signed-in browser pump so sending does not wait on a page refresh.
+ */
+export async function drainUserEmailQueue(
+  supabase: AppSupabaseClient,
+  userId: string,
+  options?: { campaignId?: string; timeBudgetMs?: number },
+): Promise<QueueDrainResult> {
+  const startedAt = Date.now();
+  const timeBudgetMs = options?.timeBudgetMs ?? USER_QUEUE_DRAIN_BUDGET_MS;
+  const deadlineAt = startedAt + timeBudgetMs;
+  const nowIso = new Date().toISOString();
+
+  let campaignIds: string[] = [];
+  if (options?.campaignId) {
+    campaignIds = [options.campaignId];
+  } else {
+    const { data: dueRows } = await supabase
+      .from("campaign_recipients")
+      .select("campaign_id")
+      .eq("user_id", userId)
+      .in("status", ["pending", "queued"])
+      .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
+      .limit(80);
+    campaignIds = [
+      ...new Set((dueRows ?? []).map((row) => row.campaign_id)),
+    ];
+  }
+
+  const totals: QueueDrainResult = {
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    retriesScheduled: 0,
+    remaining: 0,
+    hasMore: false,
+  };
+
+  if (campaignIds.length === 0) {
+    return totals;
+  }
+
+  for (const campaignId of campaignIds) {
+    if (Date.now() >= deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS) {
+      totals.hasMore = true;
+      break;
+    }
+
+    let keepPumping = true;
+    while (keepPumping && Date.now() < deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS) {
+      const result = await processCampaignQueueBatch(supabase, userId, campaignId, {
+        deadlineAt,
+      });
+      totals.campaignId = campaignId;
+      totals.campaignStatus = result.campaignStatus;
+      totals.processed = (totals.processed ?? 0) + (result.processed ?? 0);
+      totals.sent = (totals.sent ?? 0) + (result.sent ?? 0);
+      totals.failed = (totals.failed ?? 0) + (result.failed ?? 0);
+      totals.skipped = (totals.skipped ?? 0) + (result.skipped ?? 0);
+      totals.retriesScheduled =
+        (totals.retriesScheduled ?? 0) + (result.retriesScheduled ?? 0);
+      totals.remaining = result.remaining ?? 0;
+      if (result.error) {
+        totals.error = result.error;
+        keepPumping = false;
+        break;
+      }
+      keepPumping =
+        (result.processed ?? 0) > 0 && (result.remaining ?? 0) > 0;
+    }
+  }
+
+  const dueNowIso = new Date().toISOString();
+  const { count: dueRemaining } = await supabase
+    .from("campaign_recipients")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .in("status", ["pending", "queued"])
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${dueNowIso}`);
+  totals.hasMore = totals.hasMore || (dueRemaining ?? 0) > 0;
+  if (totals.hasMore && (totals.remaining ?? 0) === 0) {
+    totals.remaining = dueRemaining ?? 0;
+  }
+
+  return totals;
 }

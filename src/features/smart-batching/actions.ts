@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { processCampaignQueueBatch } from "@/features/campaigns/queue-worker";
 import { getQueueConfig } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -386,29 +385,14 @@ export async function queueCampaignBatchAction(input: {
   });
   if (error) return { error: rpcError(error, "Unable to queue this batch.") };
   const result = (data ?? {}) as { queued?: number };
-  let firstRunError: string | undefined;
-  if (!parsed.data.scheduledAt) {
-    // Start the queue immediately; the page pump and background cron continue it.
-    const firstRun = await processCampaignQueueBatch(
-      supabase,
-      user.id,
-      parsed.data.campaignId,
-    );
-    firstRunError = firstRun.error;
-  }
   revalidatePath(`/campaigns/${parsed.data.campaignId}`);
   revalidatePath(`/batches/${parsed.data.batchId}`);
   revalidatePath("/contacts");
   return {
     queued: result.queued ?? 0,
-    error: firstRunError
-      ? `${result.queued ?? 0} emails were queued, but sending paused: ${firstRunError}`
-      : undefined,
-    success: firstRunError
-      ? undefined
-      : parsed.data.scheduledAt
-        ? `${result.queued ?? 0} emails scheduled through the existing queue.`
-        : `${result.queued ?? 0} emails queued and sending now.`,
+    success: parsed.data.scheduledAt
+      ? `${result.queued ?? 0} emails scheduled through the existing queue.`
+      : `${result.queued ?? 0} emails queued and sending now.`,
   };
 }
 
@@ -456,31 +440,19 @@ export async function queueCampaignBatchesAction(input: {
     batches_queued?: number;
     batches_skipped?: number;
   };
-  // Deliver the first queue slice in this request instead of waiting for the
-  // next browser refresh or minute cron.
-  const firstRun = await processCampaignQueueBatch(
-    supabase,
-    user.id,
-    parsed.data.campaignId,
-  );
   revalidatePath(`/campaigns/${parsed.data.campaignId}`);
   revalidatePath("/contacts");
   return {
     queued: result.queued ?? 0,
-    error: firstRun.error
-      ? `${result.queued ?? 0} emails were queued, but sending paused: ${firstRun.error}`
-      : undefined,
-    success: firstRun.error
-      ? undefined
-      : `${result.queued ?? 0} emails from ${
-          result.batches_queued ?? parsed.data.batchIds.length
-        } batches queued and sending now.${
-          result.batches_skipped
-            ? ` ${result.batches_skipped} fully duplicated batch${
-                result.batches_skipped === 1 ? " was" : "es were"
-              } skipped.`
-            : ""
-        }`,
+    success: `${result.queued ?? 0} emails from ${
+      result.batches_queued ?? parsed.data.batchIds.length
+    } batches queued and sending now.${
+      result.batches_skipped
+        ? ` ${result.batches_skipped} fully duplicated batch${
+            result.batches_skipped === 1 ? " was" : "es were"
+          } skipped.`
+        : ""
+    }`,
   };
 }
 

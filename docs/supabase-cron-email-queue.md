@@ -73,3 +73,5 @@ Each run:
 6. Pauses on Gmail auth failure or quota/rate-limit responses
 
 The campaign page also processes batches while open (useful for local development).
+While you are signed in anywhere in the app, a background pump keeps draining the
+queue so sending does not wait on a manual refresh.

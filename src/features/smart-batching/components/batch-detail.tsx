@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   ArrowLeft,
   CalendarClock,
@@ -19,7 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { processQueueBatchAction } from "@/features/campaigns/queue-actions";
+import { useLiveSendProgress } from "@/features/campaigns/hooks/use-live-send-progress";
+import { kickEmailQueue } from "@/features/campaigns/queue-events";
 import {
   queueCampaignBatchAction,
   removeContactFromBatchAction,
@@ -41,7 +42,6 @@ function csvCell(value: string | null) {
 
 export function BatchDetail({ detail }: Props) {
   const router = useRouter();
-  const processingRef = useRef(false);
   const [search, setSearch] = useState("");
   const [scheduleFor, setScheduleFor] = useState<SmartBatchCampaign | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
@@ -64,15 +64,19 @@ export function BatchDetail({ detail }: Props) {
         .includes(query),
     );
   }, [detail.contacts, search]);
-  const activeCampaignIds = useMemo(
+  const activeCampaigns = useMemo(
     () =>
-      detail.batch.campaigns
-        .filter((campaign) =>
-          ["processing", "scheduled"].includes(campaign.status),
-        )
-        .map((campaign) => campaign.campaignId),
+      detail.batch.campaigns.filter((campaign) =>
+        ["processing", "scheduled"].includes(campaign.status),
+      ),
     [detail.batch.campaigns],
   );
+  const liveCampaign = activeCampaigns[0];
+  const { live } = useLiveSendProgress({
+    enabled: Boolean(liveCampaign),
+    campaignId: liveCampaign?.campaignId,
+    campaignBatchId: liveCampaign?.id,
+  });
 
   function run(action: () => Promise<{ error?: string; success?: string }>) {
     setMessage(null);
@@ -82,42 +86,12 @@ export function BatchDetail({ detail }: Props) {
         kind: result.error ? "error" : "success",
         text: result.error ?? result.success ?? "Saved.",
       });
-      if (!result.error) router.refresh();
+      if (!result.error) {
+        kickEmailQueue();
+        router.refresh();
+      }
     });
   }
-
-  useEffect(() => {
-    if (activeCampaignIds.length === 0) return;
-
-    let cancelled = false;
-
-    async function pumpQueue() {
-      if (processingRef.current || cancelled) return;
-      processingRef.current = true;
-      try {
-        let shouldRefresh = false;
-        for (const campaignId of activeCampaignIds) {
-          const result = await processQueueBatchAction(campaignId);
-          if (result.error) {
-            setMessage({ kind: "error", text: result.error });
-          }
-          if ((result.processed ?? 0) > 0 || (result.remaining ?? 0) >= 0) {
-            shouldRefresh = true;
-          }
-        }
-        if (!cancelled && shouldRefresh) router.refresh();
-      } finally {
-        processingRef.current = false;
-      }
-    }
-
-    void pumpQueue();
-    const interval = window.setInterval(() => void pumpQueue(), 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [activeCampaignIds, router]);
 
   function exportCsv() {
     const lines = [
@@ -204,6 +178,14 @@ export function BatchDetail({ detail }: Props) {
           {message.text}
         </Alert>
       ) : null}
+      {liveCampaign ? (
+        <Alert variant="info">
+          Sending is running in the background
+          {live
+            ? ` — ${live.sent} sent, ${live.pending} remaining.`
+            : ". Progress updates here without a refresh."}
+        </Alert>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
@@ -228,11 +210,16 @@ export function BatchDetail({ detail }: Props) {
             or bypass provider limits.
           </p>
           <div className="mt-3 space-y-2">
-            {detail.batch.campaigns.map((campaign) => (
-              <div
-                key={campaign.id}
-                className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"
-              >
+            {detail.batch.campaigns.map((campaign) => {
+              const progress =
+                live && liveCampaign?.id === campaign.id
+                  ? live
+                  : campaign.progress;
+              return (
+                <div
+                  key={campaign.id}
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"
+                >
                 <div className="mr-auto min-w-0">
                   <Link
                     href={`/campaigns/${campaign.campaignId}`}
@@ -266,20 +253,19 @@ export function BatchDetail({ detail }: Props) {
                 >
                   {campaign.status}
                 </Badge>
-                {campaign.progress.total > 0 ? (
+                {progress.total > 0 ? (
                   <div className="w-full border-t border-slate-100 pt-2 sm:order-last">
                     <div className="mb-1 flex justify-between text-xs text-slate-500">
                       <span>
-                        Sent {campaign.progress.sent} · Pending{" "}
-                        {campaign.progress.pending} · Failed{" "}
-                        {campaign.progress.failed}
+                        Sent {progress.sent} · Pending {progress.pending} · Failed{" "}
+                        {progress.failed}
                       </span>
-                      <span>{campaign.progress.percent}%</span>
+                      <span>{progress.percent}%</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                       <div
                         className="h-full rounded-full bg-indigo-600 transition-all"
-                        style={{ width: `${campaign.progress.percent}%` }}
+                        style={{ width: `${progress.percent}%` }}
                       />
                     </div>
                   </div>
@@ -339,7 +325,8 @@ export function BatchDetail({ detail }: Props) {
                   </Button>
                 ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ) : (

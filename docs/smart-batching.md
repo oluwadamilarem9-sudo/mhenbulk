@@ -69,7 +69,7 @@ paused Smart Batch still requires an explicit batch resume.
 `EMAIL_QUEUE_BATCH_SIZE` is worker throughput, not a Gmail quota and not the
 user-facing Smart Batch size.
 
-The production defaults claim 20 rows per request and wait 350ms between Gmail
-API calls. The campaign page pumps the next slice every second without
-overlapping requests. The first slice starts inside the queue action, so sending
-does not wait for a page refresh or the background cron.
+The production defaults wait 350ms between Gmail API calls. Sending is driven by
+an app-wide background pump while you are signed in (any page), plus the minute
+cron if configured. Campaign and batch screens poll progress separately, so a
+manual refresh is not required to keep sending or to see counts move.

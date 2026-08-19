@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useActionState, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BarChart3, Pause, Play, Send, Trash2, XCircle } from "lucide-react";
@@ -23,7 +23,8 @@ import { CampaignForm } from "@/features/campaigns/components/campaign-form";
 import { CampaignRecipientsPanel } from "@/features/campaigns/components/campaign-recipients-panel";
 import { CampaignSequencePanel } from "@/features/campaigns/components/campaign-sequence-panel";
 import { CampaignStatusBadge } from "@/features/campaigns/components/campaign-status-badge";
-import { processQueueBatchAction } from "@/features/campaigns/queue-actions";
+import { useLiveSendProgress } from "@/features/campaigns/hooks/use-live-send-progress";
+import { kickEmailQueue } from "@/features/campaigns/queue-events";
 import type { CampaignWorkspaceData } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { subjectForDisplay } from "@/features/campaigns/schemas";
@@ -53,48 +54,34 @@ export function CampaignWorkspace({
   const [message, setMessage] = useState<CampaignActionState | null>(null);
   const [busy, startTransition] = useTransition();
   const [testState, testAction, testPending] = useActionState(sendTestEmailAction, initialState);
-  const processingRef = useRef(false);
   const isDraft = campaign.status === "draft";
   const isSending = campaign.status === "sending";
   const isScheduled = campaign.status === "scheduled";
   const isPaused = campaign.status === "paused";
   const hasLinkedBatches = data.batches.some((batch) => batch.linked);
+  const { live, pulse } = useLiveSendProgress({
+    enabled: isSending || isScheduled,
+    campaignId: campaign.id,
+  });
 
-  const runQueueBatch = useCallback(async () => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      const result = await processQueueBatchAction(campaign.id);
-      if (result.error) setMessage({ error: result.error });
-      router.refresh();
-    } finally {
-      processingRef.current = false;
-    }
-  }, [campaign.id, router]);
-
-  useEffect(() => {
-    if (!isSending) return;
-    void runQueueBatch();
-    // Keep the queue active while this workspace is open. The in-flight guard
-    // prevents overlapping workers; the short tick removes idle gaps between
-    // completed queue slices.
-    const interval = window.setInterval(() => void runQueueBatch(), 1000);
-    return () => window.clearInterval(interval);
-  }, [isSending, runQueueBatch]);
-
-  const progress = useMemo(
-    () =>
-      stats.total
-        ? Math.round(((stats.sent + stats.failed + stats.skipped) / stats.total) * 100)
-        : 0,
-    [stats],
-  );
+  const progress = useMemo(() => {
+    if (live?.total) return live.percent;
+    return stats.total
+      ? Math.round(((stats.sent + stats.failed + stats.skipped) / stats.total) * 100)
+      : 0;
+  }, [live, stats]);
+  const sentCount = live?.sent ?? stats.sent;
+  const pendingCount = live?.pending;
+  const isLiveSending = isSending || isScheduled;
 
   function run(action: () => Promise<CampaignActionState>, onSuccess?: () => void) {
     startTransition(async () => {
       const result = await action();
       setMessage(result);
-      if (!result.error) onSuccess?.();
+      if (!result.error) {
+        kickEmailQueue();
+        onSuccess?.();
+      }
       router.refresh();
     });
   }
@@ -194,6 +181,16 @@ export function CampaignWorkspace({
           {message.error ?? message.success}
         </Alert>
       ) : null}
+      {isLiveSending ? (
+        <Alert variant="info">
+          Sending is running in the background
+          {live
+            ? ` — ${formatNumber(live.sent)} sent, ${formatNumber(live.pending)} remaining.`
+            : pulse?.processed
+              ? ` — ${pulse.processed} just processed.`
+              : ". Counts update live without a refresh."}
+        </Alert>
+      ) : null}
       {campaign.pause_reason ? (
         <Alert variant="warning">
           Campaign paused: {campaign.pause_reason.replaceAll("_", " ")}.
@@ -223,8 +220,8 @@ export function CampaignWorkspace({
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Enrolled" value={data.members.length} />
-            <Metric label="Queued/sent records" value={stats.total} />
-            <Metric label="Accepted by Gmail" value={stats.sent} />
+            <Metric label="Queued/sent records" value={live?.total ?? stats.total} />
+            <Metric label="Accepted by Gmail" value={sentCount} />
             <Metric label="Replies recorded" value={data.replies} />
           </div>
           {!isDraft ? (
@@ -239,7 +236,10 @@ export function CampaignWorkspace({
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                   <div className="h-full bg-indigo-600" style={{ width: `${progress}%` }} />
                 </div>
-                <p className="mt-2 text-sm text-slate-500">{progress}% processed</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  {progress}% processed
+                  {pendingCount != null ? ` · ${formatNumber(pendingCount)} remaining` : ""}
+                </p>
               </CardContent>
             </Card>
           ) : null}

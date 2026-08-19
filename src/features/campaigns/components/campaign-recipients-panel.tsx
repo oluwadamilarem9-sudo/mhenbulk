@@ -40,6 +40,7 @@ import type {
   EligibleCampaignContact,
 } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
+import { kickEmailQueue } from "@/features/campaigns/queue-events";
 import {
   addBatchesToCampaignAction,
   createContactBatchesAction,
@@ -118,6 +119,7 @@ export function CampaignRecipientsPanel({
     startTransition(async () => {
       const result = await action();
       setMessage(result);
+      if (!result.error) kickEmailQueue();
       router.refresh();
     });
   }

@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { LogoutButton } from "@/features/auth/components/logout-button";
+import { QueuePump } from "@/features/campaigns/components/queue-pump";
 import { Button } from "@/components/ui/button";
 
 type AppShellProps = {
@@ -22,6 +23,7 @@ export function AppShell({ children, userEmail, userName }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <QueuePump />
       <div className="mx-auto flex min-h-screen max-w-[1440px]">
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
           <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-5">

@@ -180,6 +180,7 @@ async function handleWorkerRequest(request: Request) {
                 supabase,
                 campaign.user_id,
                 campaign.id,
+                { deadlineAt: startedAt + WORKER_TIME_BUDGET_MS },
               );
               results.push({ campaignId: campaign.id, ...result });
               keepPumping =
