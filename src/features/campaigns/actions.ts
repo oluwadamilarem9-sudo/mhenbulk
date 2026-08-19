@@ -387,6 +387,59 @@ export async function deleteCampaignAction(
   return { success: "Campaign deleted." };
 }
 
+export async function deleteCampaignsAction(
+  campaignIds: string[],
+): Promise<CampaignActionState> {
+  const parsed = z
+    .object({ campaignIds: z.array(z.string().uuid()).min(1).max(200) })
+    .safeParse({ campaignIds: [...new Set(campaignIds)] });
+  if (!parsed.success) return { error: "Select at least one campaign to delete." };
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  // Confirm ownership and fetch statuses.
+  const { data: owned } = await supabase
+    .from("campaigns")
+    .select("id, status")
+    .eq("user_id", user.id)
+    .in("id", parsed.data.campaignIds);
+  if (!owned || owned.length === 0) return { error: "No matching campaigns found." };
+
+  const sending = owned.filter((c) => c.status === "sending");
+  if (sending.length > 0) {
+    return { error: "Cancel or pause actively-sending campaigns before deleting them." };
+  }
+
+  const ownedIds = owned.map((c) => c.id);
+
+  // Use service-role client to bypass any RLS restrictions on cascade deletes.
+  let trusted: ReturnType<typeof createServiceRoleClient>;
+  try {
+    trusted = createServiceRoleClient();
+  } catch {
+    trusted = supabase as unknown as ReturnType<typeof createServiceRoleClient>;
+  }
+
+  const CHUNK = 10;
+  let deleted = 0;
+  for (let i = 0; i < ownedIds.length; i += CHUNK) {
+    const chunk = ownedIds.slice(i, i + CHUNK);
+    const { data, error } = await trusted
+      .from("campaigns")
+      .delete()
+      .eq("user_id", user.id)
+      .in("id", chunk)
+      .select("id");
+    if (error) return { error: `Unable to delete campaigns. (${error.message})` };
+    deleted += (data ?? []).length;
+  }
+
+  revalidatePath("/campaigns");
+  revalidatePath("/dashboard");
+  return { success: `${deleted} campaign${deleted === 1 ? "" : "s"} deleted.` };
+}
+
 export async function sendTestEmailAction(
   _prev: CampaignActionState,
   formData: FormData,

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getQueueConfig } from "@/lib/env";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 
 const uuid = z.string().uuid();
 const batchSizeSchema = z.coerce.number().int().min(1).max(1000);
@@ -220,11 +220,23 @@ export async function deleteContactBatchesAction(
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
 
+  // Verify ownership — only batches belonging to this user proceed.
+  const { data: ownedRows } = await supabase
+    .from("contact_batches")
+    .select("id")
+    .eq("user_id", user.id)
+    .in("id", parsed.data.batchIds);
+  const ownedIds = (ownedRows ?? []).map((r) => r.id);
+  if (ownedIds.length === 0) {
+    return { error: "No matching batches found." };
+  }
+
+  // Block deletion if any batch is actively sending.
   const { count: activeCount } = await supabase
     .from("campaign_batches")
     .select("*", { count: "exact", head: true })
     .eq("user_id", user.id)
-    .in("batch_id", parsed.data.batchIds)
+    .in("batch_id", ownedIds)
     .in("status", ["scheduled", "processing"]);
   if ((activeCount ?? 0) > 0) {
     return {
@@ -233,20 +245,32 @@ export async function deleteContactBatchesAction(
     };
   }
 
-  // PostgREST encodes .in() as a URL query string; large arrays exceed limits.
-  // Chunk into groups of 10 to stay well within URL length constraints.
+  // Use the service-role client so cascading deletes through campaign_batches
+  // are not blocked by PostgREST RLS row-level checks on related tables.
+  // Ownership was already confirmed above with the user-scoped client.
+  let trusted: ReturnType<typeof createServiceRoleClient>;
+  try {
+    trusted = createServiceRoleClient();
+  } catch {
+    // SUPABASE_SERVICE_ROLE_KEY not configured — fall back to user client.
+    trusted = supabase as unknown as ReturnType<typeof createServiceRoleClient>;
+  }
+
   const CHUNK = 10;
-  const ids = parsed.data.batchIds;
   let deleted = 0;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const { data, error } = await supabase
+  for (let i = 0; i < ownedIds.length; i += CHUNK) {
+    const chunk = ownedIds.slice(i, i + CHUNK);
+    const { data, error } = await trusted
       .from("contact_batches")
       .delete()
       .eq("user_id", user.id)
       .in("id", chunk)
       .select("id");
-    if (error) return { error: "Unable to delete the selected batches." };
+    if (error) {
+      return {
+        error: `Unable to delete the selected batches. (${error.message})`,
+      };
+    }
     deleted += (data ?? []).length;
   }
   revalidatePath("/contacts");
