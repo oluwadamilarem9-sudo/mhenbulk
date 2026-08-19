@@ -1012,6 +1012,7 @@ export async function enrollCampaignContactsAction(
     count: rows.length,
   });
   revalidatePath(`/campaigns/${campaign.id}`);
+  revalidatePath("/campaigns");
   return { success: `${rows.length} contact${rows.length === 1 ? "" : "s"} added.` };
 }
 
@@ -1057,7 +1058,10 @@ export async function addAndEnrollContactAction(
     return { error: "This contact is unsubscribed or suppressed and cannot be enrolled." };
   }
 
-  return enrollCampaignContactsAction(campaign.id, [saved.id]);
+  const result = await enrollCampaignContactsAction(campaign.id, [saved.id]);
+  revalidatePath("/contacts");
+  revalidatePath("/dashboard");
+  return result;
 }
 
 export async function importAndEnrollCampaignContactsAction(
@@ -1170,6 +1174,8 @@ export async function importAndEnrollCampaignContactsAction(
   }
   revalidatePath(`/campaigns/${campaign.id}`);
   revalidatePath("/contacts");
+  revalidatePath("/campaigns");
+  revalidatePath("/dashboard");
   return {
     success: `${created.contacts_batched ?? savedIds.length} contacts imported into ${
       created.batches_created ?? created.batch_ids.length
@@ -1212,6 +1218,7 @@ export async function removeCampaignContactAction(
     .in("status", ["pending", "queued"]);
   await writeCampaignActivity(supabase, user.id, campaignId, "contacts_removed", { count: 1 });
   revalidatePath(`/campaigns/${campaignId}`);
+  revalidatePath("/campaigns");
   return { success: "Recipient removed from this campaign." };
 }
 

@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 
+export const dynamic = "force-dynamic";
+
 import { Alert } from "@/components/ui/alert";
 import { ContactsManager } from "@/features/contacts/components/contacts-manager";
 import { listContacts } from "@/features/contacts/queries";

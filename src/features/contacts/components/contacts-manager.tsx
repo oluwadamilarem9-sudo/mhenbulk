@@ -200,9 +200,13 @@ export function ContactsManager({
 
     setPendingId(contact.id);
     startTransition(async () => {
-      await deleteContactAction(contact.id);
+      const result = await deleteContactAction(contact.id);
       setPendingId(null);
-      router.refresh();
+      if (result.error) {
+        setMessage({ kind: "error", text: result.error });
+      } else {
+        router.refresh();
+      }
     });
   }
 

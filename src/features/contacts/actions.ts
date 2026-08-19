@@ -277,6 +277,7 @@ export async function updateContactAction(
   if (statusResult.error) return statusResult;
 
   revalidatePath("/contacts");
+  revalidatePath("/dashboard");
   return { success: "Contact updated." };
 }
 
@@ -385,6 +386,7 @@ export async function setContactStatusAction(
   if (syncResult.error) return syncResult;
 
   revalidatePath("/contacts");
+  revalidatePath("/dashboard");
   return {
     success:
       statusResult.data === "active"

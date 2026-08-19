@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   Boxes,
   Copy,
@@ -70,6 +70,8 @@ export function SmartBatchesPanel({
     text: string;
   } | null>(null);
   const [pending, startTransition] = useTransition();
+  const [batchSearch, setBatchSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(60);
 
   const batchSize =
     sizeChoice === "custom" ? customSize : Number(sizeChoice);
@@ -77,6 +79,14 @@ export function SmartBatchesPanel({
     (total, batch) => total + batch.total_contacts,
     0,
   );
+
+  const filteredBatches = useMemo(() => {
+    const q = batchSearch.trim().toLowerCase();
+    if (!q) return batches;
+    return batches.filter((b) => b.name.toLowerCase().includes(q));
+  }, [batches, batchSearch]);
+
+  const visibleBatches = filteredBatches.slice(0, visibleCount);
 
   function run(action: () => Promise<{ error?: string; success?: string }>) {
     setMessage(null);
@@ -151,6 +161,15 @@ export function SmartBatchesPanel({
             {batches.length} batch{batches.length === 1 ? "" : "es"} ·{" "}
             {totalContacts} grouped contact{totalContacts === 1 ? "" : "s"}
           </p>
+          {batches.length > 12 && (
+            <input
+              type="search"
+              placeholder="Search batches…"
+              value={batchSearch}
+              onChange={(e) => { setBatchSearch(e.target.value); setVisibleCount(60); }}
+              className="mt-2 h-8 w-64 rounded-lg border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          )}
         </div>
         <div className="flex flex-wrap items-end gap-2">
           {[25, 50, 100].map((size) => (
@@ -290,8 +309,12 @@ export function SmartBatchesPanel({
           </CardContent>
         </Card>
       ) : (
+        <div className="space-y-3">
+        {batchSearch && filteredBatches.length === 0 && (
+          <p className="text-sm text-slate-500 px-1">No batches match "{batchSearch}".</p>
+        )}
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {batches.map((batch) => {
+          {visibleBatches.map((batch) => {
             const activeCampaign = batch.campaigns[0];
             const displayStatus = activeCampaign?.status ?? batch.status;
             return (
@@ -381,6 +404,15 @@ export function SmartBatchesPanel({
               </Card>
             );
           })}
+        </div>
+        {visibleCount < filteredBatches.length && (
+          <button
+            onClick={() => setVisibleCount((n) => n + 60)}
+            className="w-full rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            Load more ({filteredBatches.length - visibleCount} remaining)
+          </button>
+        )}
         </div>
       )}
     </section>

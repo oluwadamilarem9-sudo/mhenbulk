@@ -72,17 +72,20 @@ export async function getSmartBatchingWorkspace(userId: string): Promise<{
         .from("contact_batches")
         .select("*")
         .eq("user_id", userId)
-        .order("batch_number", { ascending: false }),
+        .order("batch_number", { ascending: false })
+        .limit(2000),
       supabase
         .from("campaign_batches")
         .select("*")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(2000),
       supabase
         .from("campaigns")
         .select("id, name, status")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(500),
       supabase
         .from("profiles")
         .select("default_batch_size")
@@ -92,7 +95,8 @@ export async function getSmartBatchingWorkspace(userId: string): Promise<{
         .from("campaign_recipients")
         .select("campaign_batch_id, status, replied_at")
         .eq("user_id", userId)
-        .not("campaign_batch_id", "is", null),
+        .not("campaign_batch_id", "is", null)
+        .limit(50000),
     ]);
 
   if (batchesResult.error) {
