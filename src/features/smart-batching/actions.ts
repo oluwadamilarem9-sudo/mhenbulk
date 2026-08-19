@@ -233,14 +233,22 @@ export async function deleteContactBatchesAction(
     };
   }
 
-  const { data, error } = await supabase
-    .from("contact_batches")
-    .delete()
-    .eq("user_id", user.id)
-    .in("id", parsed.data.batchIds)
-    .select("id");
-  if (error) return { error: "Unable to delete the selected batches." };
-  const deleted = (data ?? []).length;
+  // PostgREST encodes .in() as a URL query string; large arrays exceed limits.
+  // Chunk into groups of 10 to stay well within URL length constraints.
+  const CHUNK = 10;
+  const ids = parsed.data.batchIds;
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("contact_batches")
+      .delete()
+      .eq("user_id", user.id)
+      .in("id", chunk)
+      .select("id");
+    if (error) return { error: "Unable to delete the selected batches." };
+    deleted += (data ?? []).length;
+  }
   revalidatePath("/contacts");
   revalidatePath("/dashboard");
   return {
