@@ -27,6 +27,12 @@ const serverEnvSchema = publicEnvSchema.extend({
   EMAIL_QUEUE_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(1),
   EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(350),
   MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(3),
+  GMAIL_SEND_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(120_000)
+    .default(20_000),
   EMAIL_FINDER_MAX_SCANS_PER_HOUR: z.coerce
     .number()
     .int()
@@ -109,6 +115,7 @@ export function getServerEnv(): ServerEnv {
       unquote(process.env.EMAIL_QUEUE_CONCURRENCY) || "1",
     EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "350",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
+    GMAIL_SEND_TIMEOUT_MS: unquote(process.env.GMAIL_SEND_TIMEOUT_MS) || "20000",
     EMAIL_FINDER_MAX_SCANS_PER_HOUR:
       unquote(process.env.EMAIL_FINDER_MAX_SCANS_PER_HOUR) || "20",
     EMAIL_FINDER_MAX_PAGES_PER_SCAN:
@@ -138,5 +145,6 @@ export function getQueueConfig() {
     concurrency: Number(process.env.EMAIL_QUEUE_CONCURRENCY || 1),
     sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 350),
     maxRetries: Number(process.env.MAX_RETRIES || 3),
+    gmailSendTimeoutMs: Number(process.env.GMAIL_SEND_TIMEOUT_MS || 20_000),
   };
 }

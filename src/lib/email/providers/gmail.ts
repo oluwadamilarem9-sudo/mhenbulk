@@ -3,6 +3,7 @@ import type {
   SendEmailInput,
   SendEmailResult,
 } from "@/lib/email/types";
+import { getQueueConfig } from "@/lib/env";
 
 function encodeBase64Url(value: Buffer | string): string {
   const buffer = typeof value === "string" ? Buffer.from(value, "utf8") : value;
@@ -106,26 +107,35 @@ export class GmailProvider implements EmailProvider {
 
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     try {
+      const { gmailSendTimeoutMs } = getQueueConfig();
       const raw = buildMimeMessage({
         ...input,
         fromEmail: this.fromEmail,
         fromName: input.fromName ?? this.fromName ?? undefined,
       });
 
-      const response = await fetch(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.accessToken}`,
-            "Content-Type": "application/json",
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), gmailSendTimeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(
+          "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              raw: encodeBase64Url(raw),
+              ...(input.threadId ? { threadId: input.threadId } : {}),
+            }),
+            signal: controller.signal,
           },
-          body: JSON.stringify({
-            raw: encodeBase64Url(raw),
-            ...(input.threadId ? { threadId: input.threadId } : {}),
-          }),
-        },
-      );
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
 
       if (response.ok) {
         const data = (await response.json()) as { id?: string; threadId?: string };
@@ -214,6 +224,15 @@ export class GmailProvider implements EmailProvider {
         error: `Gmail ${response.status}: ${body.slice(0, 300)}`,
       };
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return {
+          success: false,
+          provider: this.name,
+          retryable: true,
+          errorCode: "provider_error",
+          error: "Gmail request timed out.",
+        };
+      }
       return {
         success: false,
         provider: this.name,

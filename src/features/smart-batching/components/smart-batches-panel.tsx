@@ -311,7 +311,9 @@ export function SmartBatchesPanel({
       ) : (
         <div className="space-y-3">
         {batchSearch && filteredBatches.length === 0 && (
-          <p className="text-sm text-slate-500 px-1">No batches match "{batchSearch}".</p>
+          <p className="text-sm text-slate-500 px-1">
+            No batches match &quot;{batchSearch}&quot;.
+          </p>
         )}
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visibleBatches.map((batch) => {

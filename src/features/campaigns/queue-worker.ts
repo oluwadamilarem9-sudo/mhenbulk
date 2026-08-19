@@ -43,7 +43,7 @@ async function recoverExpiredClaims(
 ) {
   const nowIso = new Date().toISOString();
 
-  await supabase
+  const { data: recovered } = await supabase
     .from("campaign_recipients")
     .update({
       status: "queued",
@@ -55,7 +55,17 @@ async function recoverExpiredClaims(
     .eq("campaign_id", campaignId)
     .eq("user_id", userId)
     .eq("status", "sending")
-    .lt("claim_expires_at", nowIso);
+    .lt("claim_expires_at", nowIso)
+    .select("id, campaign_batch_id, email_account_id");
+
+  for (const row of recovered ?? []) {
+    console.info("[QUEUE] Job recovered", {
+      jobId: row.id,
+      campaignId,
+      batchId: row.campaign_batch_id,
+      sendingAccountId: row.email_account_id,
+    });
+  }
 }
 
 async function pauseForAccountIssue(
@@ -556,14 +566,27 @@ export async function processCampaignQueueBatch(
       .eq("id", recipient.id)
       .eq("user_id", userId)
       .in("status", ["pending", "queued"])
-      .select("id")
+      .select("id, campaign_batch_id, email_account_id")
       .maybeSingle();
 
     if (!claimed) {
       continue;
     }
 
+    console.info("[QUEUE] Job claimed", {
+      jobId: recipient.id,
+      campaignId: campaign.id,
+      batchId: recipient.campaign_batch_id,
+      sendingAccountId: recipient.email_account_id,
+    });
+
     processed++;
+    console.info("[QUEUE] Job processing", {
+      jobId: recipient.id,
+      campaignId: campaign.id,
+      batchId: recipient.campaign_batch_id,
+      sendingAccountId: recipient.email_account_id,
+    });
     const contact = contactMap.get(recipient.contact_id);
     const step = stepMap.get(recipient.campaign_step_id);
     const skipReason = !activeMembers.has(recipient.contact_id)
@@ -657,6 +680,12 @@ export async function processCampaignQueueBatch(
       },
     });
 
+    console.info("[QUEUE] Gmail request started", {
+      jobId: recipient.id,
+      campaignId: campaign.id,
+      batchId: recipient.campaign_batch_id,
+      sendingAccountId: recipient.email_account_id,
+    });
     const result = await provider.send({
       to: recipient.to_email,
       subject: rendered.subject,
@@ -671,6 +700,14 @@ export async function processCampaignQueueBatch(
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
       threadId: threadId ?? undefined,
+    });
+    console.info("[QUEUE] Gmail request completed", {
+      jobId: recipient.id,
+      campaignId: campaign.id,
+      batchId: recipient.campaign_batch_id,
+      sendingAccountId: recipient.email_account_id,
+      success: result.success,
+      errorCode: result.success ? null : result.errorCode,
     });
 
     const attemptCount = recipient.attempt_count + 1;
@@ -736,6 +773,12 @@ export async function processCampaignQueueBatch(
         .eq("user_id", userId);
 
       sent++;
+      console.info("[QUEUE] Job completed", {
+        jobId: recipient.id,
+        campaignId: campaign.id,
+        batchId: recipient.campaign_batch_id,
+        sendingAccountId: recipient.email_account_id,
+      });
     } else if (
       result.errorCode === "auth_required" ||
       result.errorCode === "rate_limited" ||
@@ -802,6 +845,13 @@ export async function processCampaignQueueBatch(
       });
 
       retriesScheduled++;
+      console.info("[QUEUE] Job retry scheduled", {
+        jobId: recipient.id,
+        campaignId: campaign.id,
+        batchId: recipient.campaign_batch_id,
+        sendingAccountId: recipient.email_account_id,
+        attempt: attemptCount,
+      });
     } else {
       await supabase
         .from("campaign_recipients")
@@ -852,6 +902,13 @@ export async function processCampaignQueueBatch(
       });
 
       failed++;
+      console.info("[QUEUE] Job failed", {
+        jobId: recipient.id,
+        campaignId: campaign.id,
+        batchId: recipient.campaign_batch_id,
+        sendingAccountId: recipient.email_account_id,
+        attempt: attemptCount,
+      });
     }
 
     // No throttle is needed after the final row in this worker slice.
@@ -940,6 +997,17 @@ export async function processCampaignQueueBatch(
     campaignStatus = "scheduled";
   }
 
+  console.info("[QUEUE] Batch progress updated", {
+    campaignId: campaign.id,
+    processed,
+    sent,
+    failed,
+    skipped,
+    retriesScheduled,
+    remaining: remainingCount ?? 0,
+    campaignStatus,
+  });
+
   return {
     processed,
     sent,
@@ -1002,14 +1070,17 @@ export async function drainUserEmailQueue(
     return totals;
   }
 
-  for (const campaignId of campaignIds) {
-    if (Date.now() >= deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS) {
-      totals.hasMore = true;
-      break;
-    }
-
-    let keepPumping = true;
-    while (keepPumping && Date.now() < deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS) {
+  let round = [...campaignIds];
+  while (
+    round.length > 0 &&
+    Date.now() < deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS
+  ) {
+    const nextRound: string[] = [];
+    for (const campaignId of round) {
+      if (Date.now() >= deadlineAt - STOP_CLAIMING_BEFORE_DEADLINE_MS) {
+        totals.hasMore = true;
+        break;
+      }
       const result = await processCampaignQueueBatch(supabase, userId, campaignId, {
         deadlineAt,
       });
@@ -1024,12 +1095,13 @@ export async function drainUserEmailQueue(
       totals.remaining = result.remaining ?? 0;
       if (result.error) {
         totals.error = result.error;
-        keepPumping = false;
-        break;
+        continue;
       }
-      keepPumping =
-        (result.processed ?? 0) > 0 && (result.remaining ?? 0) > 0;
+      if ((result.processed ?? 0) > 0 && (result.remaining ?? 0) > 0) {
+        nextRound.push(campaignId);
+      }
     }
+    round = nextRound;
   }
 
   const dueNowIso = new Date().toISOString();

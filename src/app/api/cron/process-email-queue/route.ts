@@ -171,23 +171,14 @@ async function handleWorkerRequest(request: Request) {
         while (nextGroup < accountGroups.length) {
           const group = accountGroups[nextGroup++];
           for (const campaign of group) {
-            let keepPumping = true;
-            while (
-              keepPumping &&
-              Date.now() - startedAt < WORKER_TIME_BUDGET_MS
-            ) {
-              const result = await processCampaignQueueBatch(
-                supabase,
-                campaign.user_id,
-                campaign.id,
-                { deadlineAt: startedAt + WORKER_TIME_BUDGET_MS },
-              );
-              results.push({ campaignId: campaign.id, ...result });
-              keepPumping =
-                !result.error &&
-                (result.processed ?? 0) > 0 &&
-                (result.remaining ?? 0) > 0;
-            }
+            if (Date.now() - startedAt >= WORKER_TIME_BUDGET_MS) break;
+            const result = await processCampaignQueueBatch(
+              supabase,
+              campaign.user_id,
+              campaign.id,
+              { deadlineAt: startedAt + WORKER_TIME_BUDGET_MS },
+            );
+            results.push({ campaignId: campaign.id, ...result });
           }
         }
       },
