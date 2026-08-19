@@ -23,6 +23,7 @@ import {
   addBatchesToCampaignAction,
   copyContactBatchEmailsAction,
   deleteContactBatchAction,
+  deleteContactBatchesAction,
   renameContactBatchAction,
   saveDefaultBatchSizeAction,
 } from "@/features/smart-batching/actions";
@@ -122,6 +123,27 @@ export function SmartBatchesPanel({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
+            {batches.length > 0 ? (
+              <input
+                type="checkbox"
+                aria-label="Select all batches"
+                checked={selected.size === batches.length && batches.length > 0}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate =
+                      selected.size > 0 && selected.size < batches.length;
+                  }
+                }}
+                onChange={() => {
+                  if (selected.size === batches.length) {
+                    setSelected(new Set());
+                  } else {
+                    setSelected(new Set(batches.map((b) => b.id)));
+                  }
+                }}
+                className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+              />
+            ) : null}
             <Boxes className="h-5 w-5 text-indigo-600" />
             <h2 className="text-lg font-semibold text-slate-900">Smart Batches</h2>
           </div>
@@ -221,6 +243,28 @@ export function SmartBatchesPanel({
           >
             <Plus className="h-4 w-4" />
             Add to campaign
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-rose-600 hover:bg-rose-50"
+            disabled={pending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Delete ${selected.size} batch${selected.size === 1 ? "" : "es"}? The contacts will remain in Contacts.`,
+                )
+              ) {
+                run(async () => {
+                  const result = await deleteContactBatchesAction([...selected]);
+                  if (!result.error) setSelected(new Set());
+                  return result;
+                });
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete selected
           </Button>
           <Button
             size="sm"

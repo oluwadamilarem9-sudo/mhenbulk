@@ -209,6 +209,45 @@ export async function deleteContactBatchAction(
   return { success: "Batch deleted. Its contacts remain in Contacts." };
 }
 
+export async function deleteContactBatchesAction(
+  batchIds: string[],
+): Promise<SmartBatchActionState> {
+  const parsed = z
+    .object({ batchIds: z.array(uuid).min(1).max(200) })
+    .safeParse({ batchIds: [...new Set(batchIds)] });
+  if (!parsed.success) return { error: "Select at least one batch to delete." };
+
+  const { supabase, user } = await requireUser();
+  if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  const { count: activeCount } = await supabase
+    .from("campaign_batches")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .in("batch_id", parsed.data.batchIds)
+    .in("status", ["scheduled", "processing"]);
+  if ((activeCount ?? 0) > 0) {
+    return {
+      error:
+        "One or more selected batches have active campaign sends. Pause or cancel them first.",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("contact_batches")
+    .delete()
+    .eq("user_id", user.id)
+    .in("id", parsed.data.batchIds)
+    .select("id");
+  if (error) return { error: "Unable to delete the selected batches." };
+  const deleted = (data ?? []).length;
+  revalidatePath("/contacts");
+  revalidatePath("/dashboard");
+  return {
+    success: `${deleted} batch${deleted === 1 ? "" : "es"} deleted. Contacts remain in Contacts.`,
+  };
+}
+
 export async function removeContactFromBatchAction(
   batchId: string,
   membershipId: string,
