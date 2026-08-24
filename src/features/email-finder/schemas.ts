@@ -52,7 +52,8 @@ export const USER_FACING_SCAN_ERRORS: Record<string, string> = {
   port_not_allowed: "Only standard HTTP and HTTPS ports are allowed.",
   hostname_blocked: "This hostname cannot be scanned.",
   private_address: "Private or internal network addresses cannot be scanned.",
-  dns_failed: "We couldn't resolve this website.",
+  dns_failed:
+    "This domain name could not be resolved. Check the URL spelling or try again later.",
   timeout: "The website took too long to respond.",
   too_many_redirects: "The website redirected too many times.",
   response_too_large: "A page was too large to scan safely.",

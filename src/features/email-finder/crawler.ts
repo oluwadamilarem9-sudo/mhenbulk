@@ -64,12 +64,22 @@ export type CrawlOptions = Partial<EmailFinderConfig> & {
   deepCrawl?: boolean;
 };
 
+export type CrawlPageFailure = {
+  url: string;
+  code: string;
+  message: string;
+};
+
 export type CrawlResult = {
   targetUrl: string;
   domain: string;
   pagesScanned: number;
+  pagesFailed: number;
   emails: ExtractedEmail[];
   scannedPages: string[];
+  failedPages: CrawlPageFailure[];
+  totalEmailHits: number;
+  durationMs: number;
   limitReached: boolean;
   javascriptHint: boolean;
   status: "completed" | "partial";
@@ -105,7 +115,8 @@ function toFailure(error: unknown): CrawlFailure {
       port_not_allowed: "Only standard HTTP and HTTPS ports are allowed.",
       hostname_blocked: "This hostname cannot be scanned.",
       private_address: "Private or internal network addresses cannot be scanned.",
-      dns_failed: "We couldn't resolve this website.",
+      dns_failed:
+        "This domain name could not be resolved. Check the URL spelling or try again later.",
       timeout: "The website took too long to respond.",
       too_many_redirects: "The website redirected too many times.",
       response_too_large: "A page was too large to scan safely.",
@@ -200,7 +211,7 @@ export async function crawlWebsiteForEmails(
 
   try {
     const seed = await validatePublicHttpUrl(rawUrl);
-    finderInfo("Scan started", {
+    finderInfo("[FINDER] Scan started", {
       domain: seed.hostname,
       target: seed.href,
       deepCrawl,
@@ -274,12 +285,18 @@ export async function crawlWebsiteForEmails(
 
     const visited = new Set<string>();
     const scannedPages: string[] = [];
+    const failedPages: CrawlPageFailure[] = [];
     const discovered: ExtractedEmail[] = [];
     let javascriptHint = false;
     let limitReached = false;
     let softWarning: string | undefined;
     let firstFailure: unknown = null;
     let discoveredLinks = 0;
+    let totalEmailHits = 0;
+    const candidatePathTimeoutMs = Math.min(
+      config.requestTimeoutMs,
+      6_000,
+    );
 
     while (queue.length > 0) {
       if (Date.now() - startedAt >= config.maxScanDurationMs) {
@@ -316,10 +333,15 @@ export async function crawlWebsiteForEmails(
             let body = "";
             let finalUrl = item.url;
 
+            const requestTimeoutMs =
+              item.depth > 0 && item.priority <= 60
+                ? candidatePathTimeoutMs
+                : config.requestTimeoutMs;
+
             try {
               const page = await safeFetchHtml(item.url, {
                 userAgent: config.userAgent,
-                timeoutMs: config.requestTimeoutMs,
+                timeoutMs: requestTimeoutMs,
                 maxBytes: config.maxResponseBytes,
                 maxRedirects: config.maxRedirects,
               });
@@ -369,8 +391,13 @@ export async function crawlWebsiteForEmails(
             }
 
             scannedPages.push(finalUrl);
+            totalEmailHits += extracted.emails.length;
             discovered.push(...extracted.emails);
             if (extracted.javascriptHint) javascriptHint = true;
+            finderDebug("emails_extracted", {
+              url: finalUrl,
+              count: extracted.emails.length,
+            });
             discoveredLinks += extracted.links.length;
 
             if (item.depth < config.maxDepth) {
@@ -398,20 +425,20 @@ export async function crawlWebsiteForEmails(
             if (item.depth === 0 && !firstFailure) {
               firstFailure = error;
             }
-            console.info("[email-finder] Skipped page", {
+            const failure = toFailure(error);
+            failedPages.push({
               url: item.url,
-              reason:
-                error instanceof SafeFetchError || error instanceof SafeUrlError
-                  ? error.code
-                  : "unknown",
+              code: failure.code,
+              message: failure.message,
             });
-            finderDebug("skipped_page", {
+            console.info("[FINDER] Page failed", {
+              url: item.url,
+              code: failure.code,
+            });
+            finderDebug("page_failed", {
               url: item.url,
               depth: item.depth,
-              reason:
-                error instanceof SafeFetchError || error instanceof SafeUrlError
-                  ? error.code
-                  : "unknown",
+              code: failure.code,
             });
           }
         }),
@@ -435,11 +462,20 @@ export async function crawlWebsiteForEmails(
 
     const emails = dedupeEmails(discovered);
     const methods = [...new Set(emails.flatMap((item) => item.methods))];
+    const durationMs = Date.now() - startedAt;
 
-    finderInfo("Scan completed", {
+    if (emails.length === 0 && scannedPages.length > 0 && !softWarning) {
+      softWarning =
+        "Pages loaded successfully, but no publicly visible email addresses were found.";
+    }
+
+    finderInfo("[FINDER] Scan completed", {
       domain: seed.hostname,
       pages: scannedPages.length,
+      pagesFailed: failedPages.length,
       emails: emails.length,
+      totalEmailHits,
+      durationMs,
       sitemapUrls,
       methods,
       limitReached,
@@ -458,8 +494,12 @@ export async function crawlWebsiteForEmails(
         targetUrl: seed.href,
         domain: seed.hostname,
         pagesScanned: scannedPages.length,
+        pagesFailed: failedPages.length,
         emails,
         scannedPages,
+        failedPages,
+        totalEmailHits,
+        durationMs,
         limitReached,
         javascriptHint,
         status: limitReached ? "partial" : "completed",

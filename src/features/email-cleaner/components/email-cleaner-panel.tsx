@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Download, LoaderCircle, Sparkles, Upload } from "lucide-react";
 
+import { DomainBreakdownPanel } from "@/components/email/domain-breakdown";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,9 @@ import {
   setCleanerReviewDecisionAction,
 } from "@/features/email-cleaner/actions";
 import type { EmailCleanerJob, EmailCleanerResult } from "@/features/email-cleaner/queries";
+import { buildDomainBreakdown } from "@/lib/email-domain-stats";
+
+const PAGE_SIZE = 100;
 
 type DraftCampaign = { id: string; name: string; status: string };
 
@@ -57,25 +61,38 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
   const [csvText, setCsvText] = useState("");
   const [csvEmailColumn, setCsvEmailColumn] = useState<string>("");
   const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [domainFilter, setDomainFilter] = useState("all");
+  const [domainSort, setDomainSort] = useState<"count" | "alpha" | "percentage">("count");
+  const [page, setPage] = useState(1);
+
+  const isJobRunning =
+    Boolean(activeJob) &&
+    (activeJob?.status === "pending" || activeJob?.status === "processing");
 
   useEffect(() => {
-    if (!activeJob) return;
-    if (!["pending", "processing"].includes(activeJob.status)) return;
+    if (!activeJob || !isJobRunning) return;
     let cancelled = false;
-    const tick = async () => {
+    void (async () => {
       const res = await processEmailCleaningJobAction(activeJob.id);
       if (!cancelled && res.error) {
         setMessage({ kind: "error", text: res.error });
       }
       if (!cancelled) router.refresh();
-    };
-    const timer = window.setInterval(() => void tick(), 1000);
-    void tick();
+    })();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
-  }, [activeJob, router]);
+  }, [activeJob, isJobRunning, router]);
+
+  const domainBreakdown = useMemo(() => {
+    if (activeJob?.domainStats) return activeJob.domainStats;
+    return buildDomainBreakdown(
+      results
+        .filter((row) => row.cleanEmail && row.status !== "DUPLICATE")
+        .map((row) => row.cleanEmail as string),
+      5,
+    );
+  }, [activeJob?.domainStats, results]);
 
   const filtered = useMemo(() => {
     return results.filter((row) => {
@@ -85,10 +102,25 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
         !q ||
         row.originalEmail.toLowerCase().includes(q) ||
         (row.cleanEmail ?? "").toLowerCase().includes(q) ||
-        row.issue.toLowerCase().includes(q);
-      return okStatus && okSearch;
+        row.issue.toLowerCase().includes(q) ||
+        row.domain.toLowerCase().includes(q);
+      const okDomain =
+        domainFilter === "all" ||
+        (domainFilter === "other"
+          ? !domainBreakdown.entries
+              .filter((entry) => entry.domain !== "other")
+              .some((entry) => entry.domain === row.domain)
+          : row.domain === domainFilter);
+      return okStatus && okSearch && okDomain;
     });
-  }, [results, search, statusFilter]);
+  }, [results, search, statusFilter, domainFilter, domainBreakdown.entries]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, currentPage]);
 
   const selectedIds = useMemo(
     () => filtered.filter((row) => row.selected).map((row) => row.id),
@@ -96,8 +128,18 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
   );
 
   const progressPercent = activeJob?.total
-    ? Math.min(100, Math.round((activeJob.processed / activeJob.total) * 100))
+    ? isJobRunning
+      ? 12
+      : Math.min(100, Math.round((activeJob.processed / activeJob.total) * 100))
     : 0;
+
+  const uniqueEmails =
+    activeJob?.uniqueEmails ||
+    new Set(
+      results
+        .filter((row) => row.cleanEmail && row.status !== "DUPLICATE")
+        .map((row) => row.cleanEmail as string),
+    ).size;
 
   function openJob(jobId: string) {
     router.push(`/email-cleaner?jobId=${jobId}`);
@@ -288,17 +330,32 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
               />
             </div>
             <p className="text-sm text-slate-600">
-              Processed {activeJob.processed} / {activeJob.total}
+              {isJobRunning
+                ? `Processing emails... ${activeJob.processed} / ${activeJob.total}`
+                : `Processed ${activeJob.processed} / ${activeJob.total}`}
             </p>
-            <div className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-7">
+              <Badge variant="muted">Total: {activeJob.total}</Badge>
+              <Badge variant="info">Unique: {uniqueEmails}</Badge>
               <Badge variant="success">Valid: {activeJob.counts.valid}</Badge>
               <Badge variant="info">Corrected: {activeJob.counts.corrected}</Badge>
-              <Badge variant="warning">Duplicate: {activeJob.counts.duplicate}</Badge>
+              <Badge variant="warning">Duplicates: {activeJob.counts.duplicate}</Badge>
               <Badge variant="danger">Invalid: {activeJob.counts.invalid}</Badge>
-              <Badge variant="warning">Suspicious: {activeJob.counts.suspicious}</Badge>
               <Badge variant="muted">Review: {activeJob.counts.review}</Badge>
             </div>
-            {["pending", "processing"].includes(activeJob.status) ? (
+            {activeJob.status === "completed" && domainBreakdown.total > 0 ? (
+              <DomainBreakdownPanel
+                breakdown={domainBreakdown}
+                selectedDomain={domainFilter}
+                onSelectDomain={(domain) => {
+                  setPage(1);
+                  setDomainFilter(domain);
+                }}
+                sort={domainSort}
+                onSortChange={setDomainSort}
+              />
+            ) : null}
+            {isJobRunning ? (
               <Button
                 variant="ghost"
                 onClick={() => run(() => cancelEmailCleaningJobAction(activeJob.id))}
@@ -322,7 +379,10 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
                   key={filter}
                   size="sm"
                   variant={statusFilter === filter ? "secondary" : "ghost"}
-                  onClick={() => setStatusFilter(filter)}
+                  onClick={() => {
+                    setPage(1);
+                    setStatusFilter(filter);
+                  }}
                 >
                   {filter}
                 </Button>
@@ -330,7 +390,10 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
               <Input
                 className="h-9 w-64"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setPage(1);
+                  setSearch(event.target.value);
+                }}
                 placeholder="Search emails..."
               />
             </div>
@@ -443,6 +506,7 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
                     <th className="px-3 py-2">Select</th>
                     <th className="px-3 py-2">Original Email</th>
                     <th className="px-3 py-2">Clean Email</th>
+                    <th className="px-3 py-2">Domain</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Issue</th>
                     <th className="px-3 py-2">Suggested Correction</th>
@@ -450,7 +514,7 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row) => (
+                  {paged.map((row) => (
                     <tr key={row.id} className="border-b border-slate-100">
                       <td className="px-3 py-2">
                         <input
@@ -469,6 +533,7 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
                       </td>
                       <td className="px-3 py-2 font-mono text-xs">{row.originalEmail}</td>
                       <td className="px-3 py-2 font-mono text-xs">{row.cleanEmail ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.domain || "—"}</td>
                       <td className="px-3 py-2">
                         <Badge variant={row.status === "INVALID" ? "danger" : "info"}>
                           {row.status}
@@ -514,9 +579,34 @@ export function EmailCleanerPanel({ jobs, activeJob, results, draftCampaigns }: 
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-500">
-              {selectedIds.length} selected in current filter.
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+              <p>
+                Showing {(currentPage - 1) * PAGE_SIZE + 1}–
+                {Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} filtered rows ·{" "}
+                {selectedIds.length} selected
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Previous
+                </Button>
+                <span>
+                  Page {currentPage} / {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       ) : null}

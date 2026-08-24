@@ -12,6 +12,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 
+import { DomainBreakdownPanel } from "@/components/email/domain-breakdown";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ import {
 import { createEmailCleaningJobFromFinderAction } from "@/features/email-cleaner/actions";
 import { FinderResultsTable } from "@/features/email-finder/components/finder-results-table";
 import { exportResultsCsv } from "@/features/email-finder/export-csv";
+import { buildDomainBreakdown } from "@/lib/email-domain-stats";
 import { isOwnerGradeEmail } from "@/features/email-finder/score";
 import type {
   EmailFinderResultRow,
@@ -39,6 +41,15 @@ type DraftCampaign = {
   id: string;
   name: string;
   status: string;
+};
+
+type ScanStats = {
+  totalEmailHits: number;
+  uniqueEmails: number;
+  duplicateOccurrences: number;
+  pagesScanned: number;
+  pagesFailed: number;
+  durationMs: number;
 };
 
 type Props = {
@@ -79,6 +90,9 @@ export function EmailFinderPanel({
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(initialResults.filter((row) => row.selected).map((row) => row.id)),
   );
+  const [scanStats, setScanStats] = useState<ScanStats | null>(null);
+  const [domainFilter, setDomainFilter] = useState("all");
+  const [domainSort, setDomainSort] = useState<"count" | "alpha" | "percentage">("count");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<"all" | "personal" | "business" | "generic">(
     "all",
@@ -95,9 +109,26 @@ export function EmailFinderPanel({
   const [showCampaignPicker, setShowCampaignPicker] = useState(false);
   const [busy, startTransition] = useTransition();
 
+  const domainBreakdown = useMemo(
+    () => buildDomainBreakdown(results.map((row) => row.email), 5),
+    [results],
+  );
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return results.filter((row) => {
+      if (domainFilter !== "all") {
+        if (domainFilter === "other") {
+          const topDomains = new Set(
+            domainBreakdown.entries
+              .filter((entry) => entry.domain !== "other")
+              .map((entry) => entry.domain),
+          );
+          if (topDomains.has(row.domain)) return false;
+        } else if (row.domain !== domainFilter) {
+          return false;
+        }
+      }
       if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
       if (confidenceFilter !== "all" && row.confidence !== confidenceFilter) {
         return false;
@@ -111,7 +142,7 @@ export function EmailFinderPanel({
         row.category.includes(query)
       );
     });
-  }, [results, search, categoryFilter, confidenceFilter, ownerGradeOnly]);
+  }, [results, search, categoryFilter, confidenceFilter, ownerGradeOnly, domainFilter, domainBreakdown.entries]);
 
   const selectedRows = results.filter((row) => selected.has(row.id));
 
@@ -142,6 +173,8 @@ export function EmailFinderPanel({
     setWarning(null);
     setScanning(true);
     setScannedPages([]);
+    setScanStats(null);
+    setDomainFilter("all");
     try {
       const response = await fetch("/api/email-finder/scan", {
         method: "POST",
@@ -155,6 +188,7 @@ export function EmailFinderPanel({
         results?: EmailFinderResultRow[];
         scannedPages?: string[];
         warning?: string | null;
+        scanStats?: ScanStats;
       };
 
       if (!response.ok || !payload.scan) {
@@ -169,6 +203,7 @@ export function EmailFinderPanel({
       setResults(payload.results ?? []);
       setSelected(new Set());
       setScannedPages(payload.scannedPages ?? []);
+      setScanStats(payload.scanStats ?? null);
       setWarning(payload.warning ?? payload.scan.errorMessage);
       router.replace(`/email-finder?scanId=${payload.scan.id}`);
       router.refresh();
@@ -287,11 +322,51 @@ export function EmailFinderPanel({
           <CardHeader>
             <CardTitle>Results</CardTitle>
             <CardDescription>
-              Website: {scan.domain} · Pages scanned: {scan.pagesScanned} · Emails
-              found: {scan.emailsFound}
+              Website: {scan.domain}
+              {scan.status === "failed" ? " · Scan failed" : " · Scan complete"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
+            {scanStats ? (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs text-slate-500">Emails found</p>
+                  <p className="text-xl font-semibold">{scanStats.totalEmailHits}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs text-slate-500">Unique emails</p>
+                  <p className="text-xl font-semibold">{scanStats.uniqueEmails}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs text-slate-500">Pages scanned / failed</p>
+                  <p className="text-xl font-semibold">
+                    {scanStats.pagesScanned} / {scanStats.pagesFailed}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs text-slate-500">Duration</p>
+                  <p className="text-xl font-semibold">
+                    {(scanStats.durationMs / 1000).toFixed(1)}s
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {scanStats && scanStats.duplicateOccurrences > 0 ? (
+              <p className="text-sm text-slate-600">
+                Duplicate occurrences: {scanStats.duplicateOccurrences}
+              </p>
+            ) : null}
+
+            {results.length > 0 ? (
+              <DomainBreakdownPanel
+                breakdown={domainBreakdown}
+                selectedDomain={domainFilter}
+                onSelectDomain={setDomainFilter}
+                sort={domainSort}
+                onSortChange={setDomainSort}
+              />
+            ) : null}
             {scan.javascriptHint ? (
               <Alert variant="info">
                 Some website content may require JavaScript and could not be scanned.
@@ -301,10 +376,14 @@ export function EmailFinderPanel({
             {results.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center">
                 <p className="font-medium text-slate-900">
-                  No publicly visible email addresses were found.
+                  {scan.status === "failed"
+                    ? scan.errorMessage ?? "This website could not be scanned."
+                    : "No publicly visible email addresses were found."}
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Try another website or check whether the site publishes contact emails.
+                  {scan.status === "failed"
+                    ? "Check the URL, DNS, or whether the site blocks automated access."
+                    : "Pages loaded successfully, but no email addresses were visible on scanned pages."}
                 </p>
               </div>
             ) : (

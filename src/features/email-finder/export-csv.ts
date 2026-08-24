@@ -1,14 +1,16 @@
 import type { EmailFinderResultRow } from "@/features/email-finder/queries";
+import { classifyEmailProvider } from "@/lib/email-domain-stats";
 
 const HEADER = [
   "email",
   "domain",
+  "email_type",
   "source_url",
+  "occurrences",
+  "status",
   "category",
   "confidence",
   "discovered_at",
-  "first_name",
-  "last_name",
 ];
 
 function quote(value: string): string {
@@ -26,12 +28,13 @@ export function exportResultsCsv(
       [
         row.email,
         row.domain,
+        classifyEmailProvider(row.domain),
         row.sourceUrl,
+        String(row.sourceUrls.length || 1),
+        "Found",
         row.category,
         row.confidence,
         row.createdAt,
-        "",
-        "",
       ]
         .map(String)
         .map(quote)

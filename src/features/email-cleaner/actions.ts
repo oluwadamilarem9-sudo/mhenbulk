@@ -7,12 +7,18 @@ import { enrollCampaignContactsAction } from "@/features/campaigns/actions";
 import { createContactBatchesAction } from "@/features/smart-batching/actions";
 import { createClient } from "@/lib/supabase/server";
 import {
+  buildDomainBreakdown,
+  classifyEmailProvider,
+  extractEmailDomain,
+} from "@/lib/email-domain-stats";
+import {
   cleanOneRecord,
   markDuplicates,
   parseCsvForCleaner,
   parsePastedEmails,
   toCsv,
   type CleanerInputRecord,
+  type CleanerOutputRecord,
 } from "@/features/email-cleaner/utils";
 
 async function requireUser() {
@@ -167,6 +173,16 @@ export async function createEmailCleaningJobFromFinderAction(scanId: string, res
   return { jobId: job.id };
 }
 
+const INSERT_CHUNK = 500;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function tally(rows: Array<{ status: string }>) {
   const counts = {
     valid: 0,
@@ -187,7 +203,19 @@ function tally(rows: Array<{ status: string }>) {
   return counts;
 }
 
-export async function processEmailCleaningJobAction(jobId: string, chunkSize = 500) {
+function domainStatsFromRows(rows: CleanerOutputRecord[]) {
+  const emails = rows
+    .filter(
+      (row) =>
+        row.cleanEmail &&
+        row.status !== "INVALID" &&
+        row.status !== "DUPLICATE",
+    )
+    .map((row) => row.cleanEmail as string);
+  return buildDomainBreakdown(emails, 5);
+}
+
+export async function processEmailCleaningJobAction(jobId: string) {
   const id = z.string().uuid().safeParse(jobId);
   if (!id.success) return { error: "Invalid cleaning job." };
   const { supabase, user } = await requireUser();
@@ -205,104 +233,128 @@ export async function processEmailCleaningJobAction(jobId: string, chunkSize = 5
     return { ok: true, status };
   }
 
-  const payload = (job.payload as { records?: CleanerInputRecord[] } | null) ?? {};
+  const payload =
+    (job.payload as {
+      records?: CleanerInputRecord[];
+      domainStats?: ReturnType<typeof buildDomainBreakdown>;
+    } | null) ?? {};
   const all = payload.records ?? [];
-  const processed = Number(job.processed_records ?? 0);
   const keepMode = (job.keep_mode === "last" ? "last" : "first") as "first" | "last";
-  const next = all.slice(processed, Math.min(processed + chunkSize, all.length));
-  // Clean each chunk independently; duplicates are resolved after all rows land.
-  const cleaned = next.map(cleanOneRecord);
+  const processed = Number(job.processed_records ?? 0);
 
-  if (next.length > 0) {
-    await supabase.from("email_cleaning_results").insert(
-      cleaned.map((row) => ({
-        user_id: user.id,
-        job_id: id.data,
-        row_index: row.rowIndex,
-        original_email: row.originalEmail,
-        clean_email: row.cleanEmail,
-        status: row.status,
-        issue: row.issue,
-        suggested_correction: row.suggestedCorrection,
-        confidence: row.confidence,
-        extra: row.extra,
-        selected: row.status !== "INVALID",
-      })),
-    );
+  if (processed >= all.length) {
+    return { ok: true, status: "completed", processed: all.length };
   }
 
-  const newProcessed = processed + next.length;
-  const completed = newProcessed >= all.length;
+  console.info("[CLEANER] Job started", {
+    jobId: id.data,
+    total: all.length,
+  });
 
-  if (completed) {
-    const { data: resultRows } = await supabase
-      .from("email_cleaning_results")
-      .select("id, row_index, clean_email, status")
-      .eq("job_id", id.data)
-      .eq("user_id", user.id)
-      .order("row_index", { ascending: true });
-
-    const mapped = (resultRows ?? []).map((row) => ({
-      rowIndex: row.row_index,
-      originalEmail: "",
-      cleanEmail: row.clean_email,
-      status: row.status as
-        | "VALID"
-        | "CORRECTED"
-        | "DUPLICATE"
-        | "INVALID"
-        | "SUSPICIOUS"
-        | "REVIEW_REQUIRED",
-      issue: "",
-      suggestedCorrection: null,
-      confidence: null,
-      extra: {},
-    }));
-    const withDupes = markDuplicates(mapped, keepMode);
-    const duplicateIds = (resultRows ?? [])
-      .filter((_, index) => withDupes[index]?.status === "DUPLICATE")
-      .map((row) => row.id);
-
-    for (let i = 0; i < duplicateIds.length; i += 200) {
-      const chunk = duplicateIds.slice(i, i + 200);
-      if (!chunk.length) continue;
-      await supabase
-        .from("email_cleaning_results")
-        .update({
-          status: "DUPLICATE",
-          issue: "Duplicate email",
-          selected: false,
-        })
-        .eq("user_id", user.id)
-        .eq("job_id", id.data)
-        .in("id", chunk);
-    }
-  }
-
-  const { data: allResults } = await supabase
-    .from("email_cleaning_results")
-    .select("status")
-    .eq("job_id", id.data)
+  await supabase
+    .from("email_cleaning_jobs")
+    .update({ status: "processing" })
+    .eq("id", id.data)
     .eq("user_id", user.id);
-  const counts = tally(allResults ?? []);
+
+  const cleaned = all.map((record) => {
+    try {
+      return cleanOneRecord(record);
+    } catch {
+      return {
+        rowIndex: record.rowIndex,
+        originalEmail: record.originalEmail,
+        cleanEmail: null,
+        status: "INVALID" as const,
+        issue: "Processing error",
+        suggestedCorrection: null,
+        confidence: null,
+        extra: record.extra,
+      };
+    }
+  });
+  const withDupes = markDuplicates(cleaned, keepMode);
+  const counts = tally(withDupes);
+  const domainStats = domainStatsFromRows(withDupes);
+
+  const rows = withDupes.map((row) => ({
+    user_id: user.id,
+    job_id: id.data,
+    row_index: row.rowIndex,
+    original_email: row.originalEmail,
+    clean_email: row.cleanEmail,
+    status: row.status,
+    issue: row.issue,
+    suggested_correction: row.suggestedCorrection,
+    confidence: row.confidence,
+    extra: {
+      ...row.extra,
+      domain: row.cleanEmail ? extractEmailDomain(row.cleanEmail) : "",
+      email_type: row.cleanEmail
+        ? classifyEmailProvider(extractEmailDomain(row.cleanEmail))
+        : "Unknown",
+    },
+    selected: row.status !== "INVALID" && row.status !== "DUPLICATE",
+  }));
+
+  for (const slice of chunk(rows, INSERT_CHUNK)) {
+    const { error } = await supabase.from("email_cleaning_results").insert(slice);
+    if (error) {
+      console.info("[CLEANER] Insert failed", { jobId: id.data, message: error.message });
+      await supabase
+        .from("email_cleaning_jobs")
+        .update({
+          status: "failed",
+          error_message: "Unable to save cleaning results.",
+        })
+        .eq("id", id.data)
+        .eq("user_id", user.id);
+      return { error: "Unable to save cleaning results." };
+    }
+    console.info("[CLEANER] Chunk processed", {
+      jobId: id.data,
+      rows: slice.length,
+    });
+  }
 
   await supabase
     .from("email_cleaning_jobs")
     .update({
-      status: completed ? "completed" : "processing",
-      processed_records: newProcessed,
+      status: "completed",
+      processed_records: all.length,
       valid_count: counts.valid,
       corrected_count: counts.corrected,
       duplicate_count: counts.duplicate,
       invalid_count: counts.invalid,
       suspicious_count: counts.suspicious,
       review_count: counts.review,
-      completed_at: completed ? new Date().toISOString() : null,
+      payload: {
+        ...payload,
+        domainStats,
+        uniqueEmails: new Set(
+          withDupes
+            .filter((row) => row.cleanEmail && row.status !== "DUPLICATE")
+            .map((row) => row.cleanEmail as string),
+        ).size,
+      },
+      completed_at: new Date().toISOString(),
     })
     .eq("id", id.data)
     .eq("user_id", user.id);
 
-  return { ok: true, status: completed ? "completed" : "processing", processed: newProcessed };
+  console.info("[CLEANER] Job completed", {
+    jobId: id.data,
+    total: all.length,
+    ...counts,
+  });
+
+  return {
+    ok: true,
+    status: "completed" as const,
+    processed: all.length,
+    counts,
+    domainStats,
+  };
 }
 
 export async function cancelEmailCleaningJobAction(jobId: string) {
@@ -398,13 +450,34 @@ export async function exportEmailCleaningCsvAction(jobId: string) {
   if (!user) return { error: "Your session has expired. Please sign in again." };
   const rows = await collectSelectedCleanEmails(supabase, user.id, id.data);
   const csv = toCsv(
-    rows.map((row) => ({
-      original_email: row.original_email ?? "",
-      clean_email: row.clean_email ?? "",
-      status: row.status ?? "",
-      issue: row.issue ?? "",
-      suggested_correction: row.suggested_correction ?? "",
-    })),
+    rows.map((row) => {
+      const extra =
+        row.extra && typeof row.extra === "object" && !Array.isArray(row.extra)
+          ? (row.extra as Record<string, unknown>)
+          : {};
+      const domain =
+        typeof extra.domain === "string"
+          ? extra.domain
+          : row.clean_email
+            ? extractEmailDomain(row.clean_email)
+            : "";
+      const emailType =
+        typeof extra.email_type === "string"
+          ? extra.email_type
+          : domain
+            ? classifyEmailProvider(domain)
+            : "Unknown";
+      return {
+        email: row.clean_email ?? "",
+        domain,
+        email_type: emailType,
+        original_email: row.original_email ?? "",
+        clean_email: row.clean_email ?? "",
+        status: row.status ?? "",
+        issue: row.issue ?? "",
+        suggested_correction: row.suggested_correction ?? "",
+      };
+    }),
   );
   return { csv };
 }

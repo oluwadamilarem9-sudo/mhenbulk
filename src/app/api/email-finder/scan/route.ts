@@ -164,6 +164,18 @@ export async function POST(request: Request) {
       createdAt: scan.created_at,
       completedAt: scan.completed_at,
     },
+    scanStats: {
+      totalEmailHits: crawl.data.totalEmailHits,
+      uniqueEmails: crawl.data.emails.length,
+      duplicateOccurrences: Math.max(
+        0,
+        crawl.data.totalEmailHits - crawl.data.emails.length,
+      ),
+      pagesScanned: crawl.data.pagesScanned,
+      pagesFailed: crawl.data.pagesFailed,
+      durationMs: crawl.data.durationMs,
+      failedPages: crawl.data.failedPages,
+    },
     results: (results ?? []).map((row) => ({
       id: row.id,
       scanId: row.scan_id,

@@ -5,13 +5,13 @@ import { Check, Copy, ExternalLink } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { classifyEmailProvider } from "@/lib/email-domain-stats";
 import type { EmailFinderResultRow } from "@/features/email-finder/queries";
 
 type Props = {
   rows: EmailFinderResultRow[];
   selected: Set<string>;
   onToggle: (id: string) => void;
-  /** Shown instead of the page path when results span many websites. */
   showDomain?: boolean;
 };
 
@@ -20,12 +20,23 @@ function sourceLabel(row: EmailFinderResultRow, showDomain: boolean): string {
     const parsed = new URL(row.sourceUrl);
     if (showDomain) return parsed.hostname.replace(/^www\./, "");
     const path = `${parsed.pathname}${parsed.search}` || "/";
-    if (row.sourceUrls.length > 1) {
-      return `${path} · +${row.sourceUrls.length - 1} more`;
-    }
     return path;
   } catch {
     return row.sourceUrl;
+  }
+}
+
+function categoryLabel(category: EmailFinderResultRow["category"]): string {
+  if (category === "personal") return "Personal Provider";
+  if (category === "generic") return "Generic";
+  return "Business Domain";
+}
+
+function formatFirstFound(value: string): string {
+  try {
+    return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "—";
   }
 }
 
@@ -61,11 +72,12 @@ export function FinderResultsTable({
           <tr>
             <th className="px-4 py-3 font-medium">Select</th>
             <th className="px-4 py-3 font-medium">Email</th>
+            <th className="px-4 py-3 font-medium">Domain</th>
             <th className="px-4 py-3 font-medium">Type</th>
-            <th className="px-4 py-3 font-medium">Confidence</th>
-            <th className="px-4 py-3 font-medium">
-              {showDomain ? "Website" : "Source"}
-            </th>
+            <th className="px-4 py-3 font-medium">Source Page</th>
+            <th className="px-4 py-3 font-medium">First Found</th>
+            <th className="px-4 py-3 font-medium">Occurrences</th>
+            <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">Actions</th>
           </tr>
         </thead>
@@ -89,6 +101,7 @@ export function FinderResultsTable({
                   <p className="text-xs text-emerald-600">Already in Contacts</p>
                 ) : null}
               </td>
+              <td className="px-4 py-3 text-slate-600">{row.domain}</td>
               <td className="px-4 py-3">
                 <Badge
                   variant={
@@ -99,16 +112,25 @@ export function FinderResultsTable({
                         : "muted"
                   }
                 >
-                  {row.category}
+                  {categoryLabel(row.category)}
                 </Badge>
-              </td>
-              <td className="px-4 py-3">
-                <Badge variant={confidenceVariant(row.confidence)}>
-                  {row.confidence}
-                </Badge>
+                <p className="mt-1 text-xs text-slate-500">
+                  {classifyEmailProvider(row.domain)}
+                </p>
               </td>
               <td className="px-4 py-3 break-all text-slate-500">
                 {sourceLabel(row, showDomain)}
+                {row.sourceUrls.length > 1 ? (
+                  <p className="text-xs text-slate-400">
+                    Also on {row.sourceUrls.length - 1} other page
+                    {row.sourceUrls.length - 1 === 1 ? "" : "s"}
+                  </p>
+                ) : null}
+              </td>
+              <td className="px-4 py-3 text-slate-500">{formatFirstFound(row.createdAt)}</td>
+              <td className="px-4 py-3 text-slate-600">{row.sourceUrls.length || 1}</td>
+              <td className="px-4 py-3">
+                <Badge variant={confidenceVariant(row.confidence)}>Found</Badge>
               </td>
               <td className="px-4 py-3">
                 <div className="flex flex-wrap gap-2">

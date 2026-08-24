@@ -1,3 +1,4 @@
+import type { DomainBreakdown } from "@/lib/email-domain-stats";
 import { listDraftCampaignOptions } from "@/features/email-finder/queries";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -12,6 +13,8 @@ export type EmailCleanerJob = {
   keepMode: "first" | "last";
   total: number;
   processed: number;
+  uniqueEmails: number;
+  domainStats: DomainBreakdown | null;
   counts: {
     valid: number;
     corrected: number;
@@ -31,6 +34,8 @@ export type EmailCleanerResult = {
   selected: boolean;
   originalEmail: string;
   cleanEmail: string | null;
+  domain: string;
+  emailType: string;
   status: string;
   issue: string;
   suggestedCorrection: string | null;
@@ -39,7 +44,18 @@ export type EmailCleanerResult = {
   extra: Record<string, unknown>;
 };
 
+function readPayload(row: JobRow) {
+  if (!row.payload || typeof row.payload !== "object" || Array.isArray(row.payload)) {
+    return {};
+  }
+  return row.payload as {
+    domainStats?: DomainBreakdown;
+    uniqueEmails?: number;
+  };
+}
+
 function mapJob(row: JobRow): EmailCleanerJob {
+  const payload = readPayload(row);
   return {
     id: row.id,
     status: row.status as EmailCleanerJob["status"],
@@ -47,6 +63,8 @@ function mapJob(row: JobRow): EmailCleanerJob {
     keepMode: row.keep_mode === "last" ? "last" : "first",
     total: row.total_records ?? 0,
     processed: row.processed_records ?? 0,
+    uniqueEmails: payload.uniqueEmails ?? 0,
+    domainStats: payload.domainStats ?? null,
     counts: {
       valid: row.valid_count ?? 0,
       corrected: row.corrected_count ?? 0,
@@ -62,21 +80,26 @@ function mapJob(row: JobRow): EmailCleanerJob {
 }
 
 function mapResult(row: ResultRow): EmailCleanerResult {
+  const extra =
+    row.extra && typeof row.extra === "object" && !Array.isArray(row.extra)
+      ? (row.extra as Record<string, unknown>)
+      : {};
+  const domain = typeof extra.domain === "string" ? extra.domain : "";
+  const emailType = typeof extra.email_type === "string" ? extra.email_type : "Unknown";
   return {
     id: row.id,
     rowIndex: row.row_index ?? 0,
     selected: Boolean(row.selected),
     originalEmail: row.original_email ?? "",
     cleanEmail: row.clean_email ?? null,
+    domain,
+    emailType,
     status: row.status ?? "INVALID",
     issue: row.issue ?? "",
     suggestedCorrection: row.suggested_correction ?? null,
     confidence: row.confidence == null ? null : Number(row.confidence),
     reviewDecision: row.review_decision ?? null,
-    extra:
-      row.extra && typeof row.extra === "object" && !Array.isArray(row.extra)
-        ? (row.extra as Record<string, unknown>)
-        : {},
+    extra,
   };
 }
 
