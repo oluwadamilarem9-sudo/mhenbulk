@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { SignupForm } from "@/features/auth/components/signup-form";
 
 export default function SignupPage() {
@@ -15,8 +17,16 @@ export default function SignupPage() {
         </div>
       </div>
       <p className="mt-6 text-center text-xs leading-5 text-slate-500">
-        No card required. Bring your own Gmail account and start with your own
-        contacts.
+        No card required. Bring your own Gmail account and start with your own contacts.
+        By creating an account, you agree to our{" "}
+        <Link href="/terms-of-service" className="font-medium text-indigo-600 hover:text-indigo-500">
+          Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy-policy" className="font-medium text-indigo-600 hover:text-indigo-500">
+          Privacy Policy
+        </Link>
+        .
       </p>
     </div>
   );

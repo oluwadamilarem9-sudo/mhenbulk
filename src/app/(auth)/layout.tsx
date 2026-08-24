@@ -2,6 +2,8 @@ import { BarChart3, Layers, Radar } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
+import { SiteFooter } from "@/components/legal/site-footer";
+
 const HIGHLIGHTS = [
   {
     icon: Radar,
@@ -22,8 +24,8 @@ const HIGHLIGHTS = [
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-white">
-      <div className="mx-auto grid min-h-screen w-full max-w-7xl lg:grid-cols-[1.05fr_1fr]">
+    <div className="flex min-h-screen flex-col bg-white">
+      <div className="mx-auto grid min-h-0 w-full max-w-7xl flex-1 lg:grid-cols-[1.05fr_1fr]">
         <aside className="relative hidden overflow-hidden bg-slate-950 text-white lg:flex lg:flex-col lg:justify-between lg:p-14">
           <div className="pointer-events-none absolute -left-32 -top-32 h-[28rem] w-[28rem] rounded-full bg-indigo-600/30 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-40 -right-24 h-[26rem] w-[26rem] rounded-full bg-violet-500/20 blur-3xl" />
@@ -96,6 +98,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </div>
         </main>
       </div>
+      <SiteFooter />
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { LoginForm } from "@/features/auth/components/login-form";
 
 type LoginPageProps = {
@@ -23,8 +25,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </div>
       </div>
       <p className="mt-6 text-center text-xs leading-5 text-slate-500">
-        Mhenbulk sends from your own connected inbox. You stay responsible for
-        who you contact.
+        Mhenbulk sends from your own connected inbox. You stay responsible for who you
+        contact. By signing in, you agree to our{" "}
+        <Link href="/terms-of-service" className="font-medium text-indigo-600 hover:text-indigo-500">
+          Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy-policy" className="font-medium text-indigo-600 hover:text-indigo-500">
+          Privacy Policy
+        </Link>
+        .
       </p>
     </div>
   );
