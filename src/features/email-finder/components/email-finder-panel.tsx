@@ -3,7 +3,14 @@
 import { useMemo, useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Copy, Download, LoaderCircle, Search, UserPlus } from "lucide-react";
+import {
+  Copy,
+  Download,
+  LoaderCircle,
+  Search,
+  UserPlus,
+  WandSparkles,
+} from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +25,7 @@ import {
   markFinderResultsSelectedAction,
   prepareFinderCampaignContactsAction,
 } from "@/features/email-finder/actions";
+import { createEmailCleaningJobFromFinderAction } from "@/features/email-cleaner/actions";
 import { FinderResultsTable } from "@/features/email-finder/components/finder-results-table";
 import { exportResultsCsv } from "@/features/email-finder/export-csv";
 import { isOwnerGradeEmail } from "@/features/email-finder/score";
@@ -380,6 +388,27 @@ export function EmailFinderPanel({
                     onClick={() => setShowCampaignPicker((value) => !value)}
                   >
                     Add Selected to Campaign
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy || selectedRows.length === 0}
+                    onClick={() =>
+                      runAction(async () => {
+                        const result = await createEmailCleaningJobFromFinderAction(
+                          scan.id,
+                          [...selected],
+                        );
+                        if (result.jobId) {
+                          router.push(`/email-cleaner?jobId=${result.jobId}`);
+                          return { success: "Moved selected rows to Email Cleaner." };
+                        }
+                        return { error: result.error ?? "Unable to start cleaner." };
+                      })
+                    }
+                  >
+                    <WandSparkles className="h-4 w-4" />
+                    Clean Selected Emails
                   </Button>
                   <Button
                     type="button"

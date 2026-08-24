@@ -7,6 +7,7 @@ import {
   Search,
   Settings,
   Users,
+  WandSparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/email-finder", label: "Email Finder", icon: Search },
+  { href: "/email-cleaner", label: "Email Cleaner", icon: WandSparkles },
   {
     href: "/email-extractor-lite",
     label: "Email Extractor Lite",

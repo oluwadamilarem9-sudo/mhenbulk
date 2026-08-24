@@ -13,6 +13,7 @@ import {
   Search,
   Tag,
   Trash2,
+  WandSparkles,
   X,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ import { ContactForm } from "@/features/contacts/components/contact-form";
 import { CsvImport } from "@/features/contacts/components/csv-import";
 import { PasteContacts } from "@/features/contacts/components/paste-contacts";
 import { createContactBatchesAction } from "@/features/smart-batching/actions";
+import { createEmailCleaningJobFromContactsAction } from "@/features/email-cleaner/actions";
 import { contactDisplayName } from "@/features/contacts/format";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -184,6 +186,20 @@ export function ContactsManager({
     });
   }
 
+  function handleCleanSelectedEmails() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    setMessage(null);
+    startTransition(async () => {
+      const result = await createEmailCleaningJobFromContactsAction(ids);
+      if (result.error || !result.jobId) {
+        setMessage({ kind: "error", text: result.error ?? "Unable to start cleaner." });
+        return;
+      }
+      router.push(`/email-cleaner?jobId=${result.jobId}`);
+    });
+  }
+
   function closeEditor() {
     setEditor({ mode: "closed" });
     router.refresh();
@@ -316,6 +332,15 @@ export function ContactsManager({
             >
               <Boxes className="h-4 w-4" />
               Create batches
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={isPending}
+              onClick={handleCleanSelectedEmails}
+            >
+              <WandSparkles className="h-4 w-4" />
+              Clean emails
             </Button>
             <Button
               variant="ghost"

@@ -1335,6 +1335,134 @@ export type Database = {
           },
         ];
       };
+      email_cleaning_jobs: {
+        Row: {
+          id: string;
+          user_id: string;
+          source: string;
+          status: string;
+          keep_mode: string;
+          total_records: number;
+          processed_records: number;
+          valid_count: number;
+          corrected_count: number;
+          duplicate_count: number;
+          invalid_count: number;
+          suspicious_count: number;
+          review_count: number;
+          payload: Json;
+          error_message: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+          cancelled_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          source?: string;
+          status?: string;
+          keep_mode?: string;
+          total_records?: number;
+          processed_records?: number;
+          valid_count?: number;
+          corrected_count?: number;
+          duplicate_count?: number;
+          invalid_count?: number;
+          suspicious_count?: number;
+          review_count?: number;
+          payload?: Json;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          source?: string;
+          status?: string;
+          keep_mode?: string;
+          total_records?: number;
+          processed_records?: number;
+          valid_count?: number;
+          corrected_count?: number;
+          duplicate_count?: number;
+          invalid_count?: number;
+          suspicious_count?: number;
+          review_count?: number;
+          payload?: Json;
+          error_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+        };
+        Relationships: [];
+      };
+      email_cleaning_results: {
+        Row: {
+          id: string;
+          user_id: string;
+          job_id: string;
+          row_index: number;
+          selected: boolean;
+          original_email: string | null;
+          clean_email: string | null;
+          status: string;
+          issue: string | null;
+          suggested_correction: string | null;
+          confidence: number | null;
+          review_decision: string | null;
+          extra: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          job_id: string;
+          row_index: number;
+          selected?: boolean;
+          original_email?: string | null;
+          clean_email?: string | null;
+          status: string;
+          issue?: string | null;
+          suggested_correction?: string | null;
+          confidence?: number | null;
+          review_decision?: string | null;
+          extra?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          job_id?: string;
+          row_index?: number;
+          selected?: boolean;
+          original_email?: string | null;
+          clean_email?: string | null;
+          status?: string;
+          issue?: string | null;
+          suggested_correction?: string | null;
+          confidence?: number | null;
+          review_decision?: string | null;
+          extra?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "email_cleaning_results_job_id_fkey";
+            columns: ["job_id"];
+            isOneToOne: false;
+            referencedRelation: "email_cleaning_jobs";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
