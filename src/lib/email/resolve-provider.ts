@@ -4,7 +4,7 @@ import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import { GmailProvider } from "@/lib/email/providers/gmail";
 import { OutlookProvider } from "@/lib/email/providers/outlook-stub";
 import type { EmailProvider } from "@/lib/email/types";
-import { refreshGoogleAccessToken } from "@/lib/google/oauth";
+import { refreshGoogleAccessTokenWithRetry, GoogleTokenRefreshError } from "@/lib/google/oauth";
 import type { Database } from "@/lib/supabase/database.types";
 
 type AppSupabaseClient = SupabaseClient<Database>;
@@ -31,7 +31,7 @@ export async function resolveEmailProviderForAccount(
   emailAccountId: string,
 ): Promise<
   | { ok: true; value: ResolvedAccountProvider }
-  | { ok: false; error: string; code: "not_found" | "auth_required" | "rate_limited" | "unsupported" }
+  | { ok: false; error: string; code: "not_found" | "auth_required" | "rate_limited" | "unsupported" | "transient" }
 > {
   const { data: account } = await supabase
     .from("email_accounts")
@@ -110,15 +110,35 @@ export async function resolveEmailProviderForAccount(
     };
   }
 
-  let accessToken = decryptSecret(credentials.encrypted_access_token);
-  const refreshToken = decryptSecret(credentials.encrypted_refresh_token);
+  let accessToken: string;
+  let refreshToken: string;
+  try {
+    accessToken = decryptSecret(credentials.encrypted_access_token);
+    refreshToken = decryptSecret(credentials.encrypted_refresh_token);
+  } catch (error) {
+    console.error("[gmail] credential decrypt failed", error);
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Stored Gmail credentials could not be read",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "Your Gmail connection needs to be reauthorized.",
+      code: "auth_required",
+    };
+  }
+
   const expiresAt = account.token_expiry
     ? new Date(account.token_expiry).getTime()
     : 0;
 
   if (!expiresAt || expiresAt - ACCESS_TOKEN_SKEW_MS <= Date.now()) {
     try {
-      const refreshed = await refreshGoogleAccessToken(refreshToken);
+      const refreshed = await refreshGoogleAccessTokenWithRetry(refreshToken);
       accessToken = refreshed.access_token;
 
       await supabase
@@ -143,18 +163,33 @@ export async function resolveEmailProviderForAccount(
         .eq("id", account.id);
     } catch (error) {
       console.error("[gmail] token refresh failed", error);
-      await supabase
-        .from("email_accounts")
-        .update({
-          status: "needs_reauth",
-          last_error: "Token refresh failed",
-        })
-        .eq("id", account.id);
+      const isTransient =
+        error instanceof GoogleTokenRefreshError &&
+        error.kind === "transient";
+
+      if (!isTransient) {
+        await supabase
+          .from("email_accounts")
+          .update({
+            status: "needs_reauth",
+            last_error: "Token refresh failed",
+          })
+          .eq("id", account.id);
+      } else {
+        await supabase
+          .from("email_accounts")
+          .update({
+            last_error: "Temporary Gmail token refresh failure",
+          })
+          .eq("id", account.id);
+      }
 
       return {
         ok: false,
-        error: "Your Gmail connection needs to be reauthorized.",
-        code: "auth_required",
+        error: isTransient
+          ? "Gmail is temporarily unavailable. Sending will retry shortly."
+          : "Your Gmail connection needs to be reauthorized.",
+        code: isTransient ? "transient" : "auth_required",
       };
     }
   }

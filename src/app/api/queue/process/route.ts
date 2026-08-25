@@ -3,8 +3,8 @@ import { z } from "zod";
 
 import {
   drainUserEmailQueue,
-  USER_QUEUE_DRAIN_BUDGET_MS,
 } from "@/features/campaigns/queue-worker";
+import { getQueueConfig } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -43,9 +43,10 @@ export async function POST(request: Request) {
     campaignId = undefined;
   }
 
+  const { drainBudgetMs } = getQueueConfig();
   const result = await drainUserEmailQueue(supabase, user.id, {
     campaignId,
-    timeBudgetMs: USER_QUEUE_DRAIN_BUDGET_MS,
+    timeBudgetMs: drainBudgetMs,
   });
 
   return NextResponse.json(result);

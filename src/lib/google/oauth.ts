@@ -101,6 +101,50 @@ export async function exchangeAuthorizationCode(options: {
   return (await response.json()) as GoogleTokenResponse;
 }
 
+export type GoogleTokenRefreshErrorKind = "auth_required" | "transient";
+
+export class GoogleTokenRefreshError extends Error {
+  readonly kind: GoogleTokenRefreshErrorKind;
+
+  constructor(message: string, kind: GoogleTokenRefreshErrorKind) {
+    super(message);
+    this.name = "GoogleTokenRefreshError";
+    this.kind = kind;
+  }
+}
+
+export function classifyGoogleTokenRefreshFailure(
+  status: number,
+  body: string,
+): GoogleTokenRefreshErrorKind {
+  const lower = body.toLowerCase();
+
+  if (
+    lower.includes("invalid_grant") ||
+    lower.includes("token has been expired or revoked") ||
+    lower.includes("invalid_client") ||
+    lower.includes("unauthorized_client")
+  ) {
+    return "auth_required";
+  }
+
+  if (
+    status >= 500 ||
+    status === 429 ||
+    lower.includes("internal") ||
+    lower.includes("temporarily unavailable") ||
+    lower.includes("backend error")
+  ) {
+    return "transient";
+  }
+
+  return status >= 400 && status < 500 ? "auth_required" : "transient";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function refreshGoogleAccessToken(
   refreshToken: string,
 ): Promise<GoogleTokenResponse> {
@@ -117,16 +161,43 @@ export async function refreshGoogleAccessToken(
     }),
   });
 
+  const body = await response.text();
+
   if (!response.ok) {
-    const body = await response.text();
-    const error = new Error(
+    throw new GoogleTokenRefreshError(
       `Google token refresh failed: ${body.slice(0, 300)}`,
-    ) as Error & { code?: string };
-    error.code = "auth_required";
-    throw error;
+      classifyGoogleTokenRefreshFailure(response.status, body),
+    );
   }
 
-  return (await response.json()) as GoogleTokenResponse;
+  return JSON.parse(body) as GoogleTokenResponse;
+}
+
+export async function refreshGoogleAccessTokenWithRetry(
+  refreshToken: string,
+  options?: { maxAttempts?: number },
+): Promise<GoogleTokenResponse> {
+  const maxAttempts = options?.maxAttempts ?? 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await refreshGoogleAccessToken(refreshToken);
+    } catch (error) {
+      lastError = error;
+      const isTransient =
+        error instanceof GoogleTokenRefreshError &&
+        error.kind === "transient";
+      if (!isTransient || attempt === maxAttempts) {
+        throw error;
+      }
+      await sleep(400 * attempt);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Google token refresh failed.");
 }
 
 export async function fetchGoogleUserInfo(

@@ -33,6 +33,12 @@ const serverEnvSchema = publicEnvSchema.extend({
     .min(1_000)
     .max(120_000)
     .default(20_000),
+  EMAIL_QUEUE_DRAIN_BUDGET_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(55_000)
+    .default(25_000),
   EMAIL_FINDER_MAX_SCANS_PER_HOUR: z.coerce
     .number()
     .int()
@@ -116,6 +122,8 @@ export function getServerEnv(): ServerEnv {
     EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "350",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
     GMAIL_SEND_TIMEOUT_MS: unquote(process.env.GMAIL_SEND_TIMEOUT_MS) || "20000",
+    EMAIL_QUEUE_DRAIN_BUDGET_MS:
+      unquote(process.env.EMAIL_QUEUE_DRAIN_BUDGET_MS) || "25000",
     EMAIL_FINDER_MAX_SCANS_PER_HOUR:
       unquote(process.env.EMAIL_FINDER_MAX_SCANS_PER_HOUR) || "20",
     EMAIL_FINDER_MAX_PAGES_PER_SCAN:
@@ -146,5 +154,6 @@ export function getQueueConfig() {
     sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 350),
     maxRetries: Number(process.env.MAX_RETRIES || 3),
     gmailSendTimeoutMs: Number(process.env.GMAIL_SEND_TIMEOUT_MS || 20_000),
+    drainBudgetMs: Number(process.env.EMAIL_QUEUE_DRAIN_BUDGET_MS || 25_000),
   };
 }

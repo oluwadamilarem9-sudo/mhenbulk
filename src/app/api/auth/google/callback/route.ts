@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { resumeCampaignsAfterAccountReconnect } from "@/features/campaigns/queue-worker";
 import {
   exchangeAuthorizationCode,
   fetchGoogleUserInfo,
@@ -88,14 +89,6 @@ export async function GET(request: Request) {
   try {
     const tokens = await exchangeAuthorizationCode({ code, codeVerifier });
 
-    if (!tokens.refresh_token) {
-      const response = NextResponse.redirect(
-        appUrl("/settings/email-accounts?error=missing_refresh_token"),
-      );
-      clearOAuthCookies(response, secure);
-      return response;
-    }
-
     const profile = await fetchGoogleUserInfo(tokens.access_token);
 
     if (!profile.email) {
@@ -165,8 +158,27 @@ export async function GET(request: Request) {
       accountId = inserted.id;
     }
 
+    let encryptedRefresh: string;
+    if (tokens.refresh_token) {
+      encryptedRefresh = encryptSecret(tokens.refresh_token);
+    } else {
+      const { data: existingCredentials } = await service
+        .from("email_account_credentials")
+        .select("encrypted_refresh_token")
+        .eq("email_account_id", accountId)
+        .maybeSingle();
+
+      if (!existingCredentials?.encrypted_refresh_token) {
+        const response = NextResponse.redirect(
+          appUrl("/settings/email-accounts?error=missing_refresh_token"),
+        );
+        clearOAuthCookies(response, secure);
+        return response;
+      }
+      encryptedRefresh = existingCredentials.encrypted_refresh_token;
+    }
+
     const encryptedAccess = encryptSecret(tokens.access_token);
-    const encryptedRefresh = encryptSecret(tokens.refresh_token);
 
     const { error: credError } = await service
       .from("email_account_credentials")
@@ -184,8 +196,24 @@ export async function GET(request: Request) {
       throw credError;
     }
 
+    const resumed = await resumeCampaignsAfterAccountReconnect(
+      service,
+      user.id,
+      accountId,
+    );
+    if (resumed > 0) {
+      console.info("[google-oauth] resumed campaigns after reconnect", {
+        accountId,
+        resumed,
+      });
+    }
+
     const response = NextResponse.redirect(
-      appUrl("/settings/email-accounts?connected=1"),
+      appUrl(
+        resumed > 0
+          ? "/settings/email-accounts?connected=1&resumed=1"
+          : "/settings/email-accounts?connected=1",
+      ),
     );
     clearOAuthCookies(response, secure);
     return response;

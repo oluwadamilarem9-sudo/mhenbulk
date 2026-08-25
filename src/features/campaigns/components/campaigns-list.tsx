@@ -8,6 +8,7 @@ import { Trash2 } from "lucide-react";
 import { CampaignStatusBadge } from "@/features/campaigns/components/campaign-status-badge";
 import { deleteCampaignsAction } from "@/features/campaigns/actions";
 import type { CampaignRow } from "@/features/campaigns/queries";
+import { subjectForDisplay } from "@/features/campaigns/schemas";
 
 export function CampaignsList({ campaigns }: { campaigns: CampaignRow[] }) {
   const router = useRouter();
@@ -125,7 +126,7 @@ export function CampaignsList({ campaigns }: { campaigns: CampaignRow[] }) {
                     </Link>
                   </td>
                   <td className="max-w-[280px] truncate px-5 py-3 text-slate-600">
-                    {campaign.subject}
+                    {subjectForDisplay(campaign.subject)}
                   </td>
                   <td className="px-5 py-3">
                     <CampaignStatusBadge status={campaign.status as "draft" | "scheduled" | "sending" | "paused" | "completed" | "cancelled"} />

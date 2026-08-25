@@ -9,6 +9,7 @@ import {
 } from "@/features/campaigns/queue-events";
 
 const IDLE_POLL_MS = 2_000;
+const ACTIVE_POLL_MS = 400;
 const ERROR_BACKOFF_MS = 2_500;
 
 async function drainOnce(campaignId?: string): Promise<QueueProgressDetail> {
@@ -88,8 +89,10 @@ export function QueuePump() {
             await waitForKick(ERROR_BACKOFF_MS);
             continue;
           }
-          if (!result.hasMore || result.processed === 0) {
+          if (!result.hasMore) {
             await waitForKick(IDLE_POLL_MS);
+          } else if ((result.processed ?? 0) === 0) {
+            await sleep(ACTIVE_POLL_MS);
           }
         } catch {
           if (!cancelled) await waitForKick(ERROR_BACKOFF_MS);

@@ -1,6 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { processCampaignQueueBatch } from "@/features/campaigns/queue-worker";
+import {
+  listCampaignsNeedingQueueWork,
+  processCampaignQueueBatch,
+} from "@/features/campaigns/queue-worker";
 import { getQueueConfig } from "@/lib/env";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
@@ -89,6 +92,8 @@ async function handleWorkerRequest(request: Request) {
   const [
     { data: dueRecipients, error: dueError },
     { data: automatedCampaigns, error: automationError },
+    { data: stuckSendingCampaigns, error: stuckError },
+    queueWork,
   ] = await Promise.all([
     supabase
       .from("campaign_recipients")
@@ -104,12 +109,20 @@ async function handleWorkerRequest(request: Request) {
       .in("status", ["sending", "scheduled", "completed"])
       .order("updated_at", { ascending: true })
       .limit(50),
+    supabase
+      .from("campaigns")
+      .select("id, user_id")
+      .eq("status", "sending")
+      .order("updated_at", { ascending: true })
+      .limit(50),
+    listCampaignsNeedingQueueWork(supabase, { limit: 100 }),
   ]);
 
-  if (dueError || automationError) {
+  if (dueError || automationError || stuckError) {
     console.error("[queue-worker] Failed to list due work", {
       dueError,
       automationError,
+      stuckError,
     });
     return Response.json(
       { error: "Unable to list due campaigns." },
@@ -125,6 +138,12 @@ async function handleWorkerRequest(request: Request) {
     });
   }
   for (const campaign of automatedCampaigns ?? []) {
+    campaignMap.set(campaign.id, campaign);
+  }
+  for (const campaign of stuckSendingCampaigns ?? []) {
+    campaignMap.set(campaign.id, campaign);
+  }
+  for (const campaign of queueWork) {
     campaignMap.set(campaign.id, campaign);
   }
   const campaigns = [...campaignMap.values()].slice(0, CAMPAIGNS_PER_RUN);

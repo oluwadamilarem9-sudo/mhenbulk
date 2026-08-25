@@ -432,6 +432,15 @@ export async function processCampaignQueueBatch(
   );
 
   if (!resolved.ok) {
+    if (resolved.code === "transient") {
+      return {
+        error: resolved.error,
+        campaignStatus: campaign.status,
+        processed: 0,
+        remaining: 0,
+      };
+    }
+
     const reason =
       resolved.code === "rate_limited" ? "rate_limit" : "auth_required";
     await pauseForAccountIssue(
@@ -1019,7 +1028,122 @@ export async function processCampaignQueueBatch(
   };
 }
 
-export const USER_QUEUE_DRAIN_BUDGET_MS = 8_000;
+export const USER_QUEUE_DRAIN_BUDGET_MS = Number(
+  process.env.EMAIL_QUEUE_DRAIN_BUDGET_MS || 25_000,
+);
+
+export type QueueCampaignRef = { id: string; user_id: string };
+
+/**
+ * Finds campaigns that still need queue processing: due recipients, stuck
+ * "sending" rows, or campaigns left in "sending" after a worker died.
+ */
+export async function listCampaignsNeedingQueueWork(
+  supabase: AppSupabaseClient,
+  options?: { userId?: string; limit?: number },
+): Promise<QueueCampaignRef[]> {
+  const nowIso = new Date().toISOString();
+  const limit = options?.limit ?? 100;
+  const campaignMap = new Map<string, QueueCampaignRef>();
+
+  const track = (campaignId: string, userId: string) => {
+    campaignMap.set(campaignId, { id: campaignId, user_id: userId });
+  };
+
+  let dueQuery = supabase
+    .from("campaign_recipients")
+    .select("campaign_id, user_id")
+    .in("status", ["pending", "queued"])
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
+    .limit(limit);
+  if (options?.userId) {
+    dueQuery = dueQuery.eq("user_id", options.userId);
+  }
+  const { data: dueRows } = await dueQuery;
+  for (const row of dueRows ?? []) {
+    track(row.campaign_id, row.user_id);
+  }
+
+  let stuckRecipientQuery = supabase
+    .from("campaign_recipients")
+    .select("campaign_id, user_id")
+    .eq("status", "sending")
+    .limit(limit);
+  if (options?.userId) {
+    stuckRecipientQuery = stuckRecipientQuery.eq("user_id", options.userId);
+  }
+  const { data: stuckRows } = await stuckRecipientQuery;
+  for (const row of stuckRows ?? []) {
+    track(row.campaign_id, row.user_id);
+  }
+
+  let sendingCampaignQuery = supabase
+    .from("campaigns")
+    .select("id, user_id")
+    .eq("status", "sending")
+    .limit(limit);
+  if (options?.userId) {
+    sendingCampaignQuery = sendingCampaignQuery.eq("user_id", options.userId);
+  }
+  const { data: sendingCampaigns } = await sendingCampaignQuery;
+  for (const campaign of sendingCampaigns ?? []) {
+    track(campaign.id, campaign.user_id);
+  }
+
+  return [...campaignMap.values()];
+}
+
+/** Resumes campaigns paused because Gmail needed reauthorization. */
+export async function resumeCampaignsAfterAccountReconnect(
+  supabase: AppSupabaseClient,
+  userId: string,
+  accountId: string,
+) {
+  const { data: resumedCampaigns } = await supabase
+    .from("campaigns")
+    .update({
+      status: "sending",
+      paused_at: null,
+      pause_reason: null,
+    })
+    .eq("user_id", userId)
+    .eq("email_account_id", accountId)
+    .eq("status", "paused")
+    .eq("pause_reason", "auth_required")
+    .select("id");
+
+  const resumedIds = (resumedCampaigns ?? []).map((campaign) => campaign.id);
+  if (!resumedIds.length) {
+    return 0;
+  }
+
+  const { data: affectedBatches } = await supabase
+    .from("campaign_batches")
+    .select("batch_id")
+    .eq("user_id", userId)
+    .in("campaign_id", resumedIds)
+    .eq("status", "paused");
+
+  await supabase
+    .from("campaign_batches")
+    .update({ status: "processing", provider_error: null })
+    .eq("user_id", userId)
+    .in("campaign_id", resumedIds)
+    .eq("status", "paused");
+
+  const batchIds = [
+    ...new Set((affectedBatches ?? []).map((batch) => batch.batch_id)),
+  ];
+  if (batchIds.length) {
+    await supabase
+      .from("contact_batches")
+      .update({ status: "processing" })
+      .eq("user_id", userId)
+      .in("id", batchIds);
+  }
+
+  return resumedIds.length;
+}
 
 export type QueueDrainResult = QueueBatchResult & {
   hasMore: boolean;
@@ -1038,22 +1162,16 @@ export async function drainUserEmailQueue(
   const startedAt = Date.now();
   const timeBudgetMs = options?.timeBudgetMs ?? USER_QUEUE_DRAIN_BUDGET_MS;
   const deadlineAt = startedAt + timeBudgetMs;
-  const nowIso = new Date().toISOString();
 
   let campaignIds: string[] = [];
   if (options?.campaignId) {
     campaignIds = [options.campaignId];
   } else {
-    const { data: dueRows } = await supabase
-      .from("campaign_recipients")
-      .select("campaign_id")
-      .eq("user_id", userId)
-      .in("status", ["pending", "queued"])
-      .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
-      .limit(80);
-    campaignIds = [
-      ...new Set((dueRows ?? []).map((row) => row.campaign_id)),
-    ];
+    const campaigns = await listCampaignsNeedingQueueWork(supabase, {
+      userId,
+      limit: 80,
+    });
+    campaignIds = campaigns.map((campaign) => campaign.id);
   }
 
   const totals: QueueDrainResult = {
@@ -1095,9 +1213,21 @@ export async function drainUserEmailQueue(
       totals.remaining = result.remaining ?? 0;
       if (result.error) {
         totals.error = result.error;
+        if (
+          result.campaignStatus !== "paused" &&
+          result.campaignStatus !== "completed" &&
+          result.campaignStatus !== "failed"
+        ) {
+          nextRound.push(campaignId);
+        }
         continue;
       }
-      if ((result.processed ?? 0) > 0 && (result.remaining ?? 0) > 0) {
+      if (
+        (result.remaining ?? 0) > 0 &&
+        result.campaignStatus !== "paused" &&
+        result.campaignStatus !== "completed" &&
+        result.campaignStatus !== "failed"
+      ) {
         nextRound.push(campaignId);
       }
     }
@@ -1105,13 +1235,22 @@ export async function drainUserEmailQueue(
   }
 
   const dueNowIso = new Date().toISOString();
-  const { count: dueRemaining } = await supabase
-    .from("campaign_recipients")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .in("status", ["pending", "queued"])
-    .or(`next_attempt_at.is.null,next_attempt_at.lte.${dueNowIso}`);
-  totals.hasMore = totals.hasMore || (dueRemaining ?? 0) > 0;
+  const [{ count: dueRemaining }, { count: activeRemaining }] =
+    await Promise.all([
+      supabase
+        .from("campaign_recipients")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .in("status", ["pending", "queued"])
+        .or(`next_attempt_at.is.null,next_attempt_at.lte.${dueNowIso}`),
+      supabase
+        .from("campaign_recipients")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .in("status", ["pending", "queued", "sending"]),
+    ]);
+  totals.hasMore =
+    totals.hasMore || (dueRemaining ?? 0) > 0 || (activeRemaining ?? 0) > 0;
   if (totals.hasMore && (totals.remaining ?? 0) === 0) {
     totals.remaining = dueRemaining ?? 0;
   }
