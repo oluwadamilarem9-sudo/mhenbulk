@@ -21,6 +21,94 @@ const RETRY_BASE_DELAY_MS = 60_000;
 const CLAIM_LEASE_MS = 2 * 60_000;
 const STOP_CLAIMING_BEFORE_DEADLINE_MS = 1_500;
 
+// ---------------------------------------------------------------------------
+// Daily send limit helpers
+// ---------------------------------------------------------------------------
+
+/** Returns today's date as a YYYY-MM-DD string in UTC. */
+function utcDateString(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Compute the current warm-up daily limit based on how many days have elapsed
+ * since warmup_start_date.  Returns null when the warm-up period is over.
+ */
+function warmupDailyLimit(warmupStartDate: string): number | null {
+  const start = new Date(warmupStartDate).getTime();
+  const days = Math.floor((Date.now() - start) / 86_400_000);
+  if (days < 8)  return 30;
+  if (days < 15) return 75;
+  if (days < 22) return 150;
+  if (days < 29) return 250;
+  if (days < 36) return 400;
+  return null;
+}
+
+/**
+ * Resets today_sent_count to 0 if it hasn't been reset today yet, then
+ * returns the account's effective daily limit (warmup overrides manual limit).
+ *
+ * Returns null when there is no cap (send freely).
+ */
+async function resetAndGetDailyLimit(
+  supabase: AppSupabaseClient,
+  accountId: string,
+): Promise<{
+  effectiveLimit: number | null;
+  todaySent: number;
+}> {
+  const today = utcDateString();
+
+  const { data: account } = await supabase
+    .from("email_accounts")
+    .select(
+      "today_sent_count, last_count_reset_date, daily_send_limit, warmup_enabled, warmup_start_date",
+    )
+    .eq("id", accountId)
+    .maybeSingle();
+
+  if (!account) return { effectiveLimit: null, todaySent: 0 };
+
+  let todaySent = account.today_sent_count ?? 0;
+
+  // Reset counter if it belongs to a previous UTC day.
+  if (account.last_count_reset_date !== today) {
+    await supabase
+      .from("email_accounts")
+      .update({ today_sent_count: 0, last_count_reset_date: today })
+      .eq("id", accountId);
+    todaySent = 0;
+  }
+
+  // Warm-up limit takes precedence over manual limit.
+  let effectiveLimit: number | null = account.daily_send_limit ?? null;
+  if (account.warmup_enabled && account.warmup_start_date) {
+    const wuLimit = warmupDailyLimit(account.warmup_start_date);
+    if (wuLimit !== null) {
+      effectiveLimit =
+        effectiveLimit === null ? wuLimit : Math.min(effectiveLimit, wuLimit);
+    }
+  }
+
+  return { effectiveLimit, todaySent };
+}
+
+/**
+ * Atomically increments today_sent_count and returns whether the send is
+ * still within the daily limit.  Call after a successful send.
+ */
+async function incrementDailySentCount(
+  supabase: AppSupabaseClient,
+  accountId: string,
+): Promise<void> {
+  const today = utcDateString();
+  await supabase.rpc("increment_daily_sent_count", {
+    p_account_id: accountId,
+    p_today: today,
+  });
+}
+
 type AppSupabaseClient = SupabaseClient<Database>;
 
 function getTrustedClient(fallback: AppSupabaseClient): AppSupabaseClient {
@@ -459,6 +547,36 @@ export async function processCampaignQueueBatch(
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Daily send limit gate
+  // ---------------------------------------------------------------------------
+  const { effectiveLimit, todaySent } = await resetAndGetDailyLimit(
+    trusted,
+    campaign.email_account_id,
+  );
+  if (effectiveLimit !== null && todaySent >= effectiveLimit) {
+    // Pause this campaign until tomorrow (rate_limit pause auto-resumes at midnight via cron).
+    const resumeAt = new Date();
+    resumeAt.setUTCHours(24, 0, 0, 0); // next UTC midnight
+    await pauseForAccountIssue(
+      trusted,
+      userId,
+      campaign.email_account_id,
+      "rate_limit",
+      `Daily send limit reached (${effectiveLimit} emails/day). Sending will resume tomorrow.`,
+      resumeAt.getTime() - Date.now(),
+    );
+    return {
+      error: `Daily send limit of ${effectiveLimit} reached. Sending paused until tomorrow.`,
+      campaignStatus: "paused",
+      processed: 0,
+      remaining: 0,
+    };
+  }
+  // Track how many more we can send in this batch.
+  let dailyRemaining =
+    effectiveLimit !== null ? effectiveLimit - todaySent : Infinity;
+
   if (campaign.status !== "sending") {
     await supabase
       .from("campaigns")
@@ -547,6 +665,21 @@ export async function processCampaignQueueBatch(
 
   for (const recipient of batch) {
     if (shouldStopClaiming()) {
+      break;
+    }
+
+    // Daily limit: stop claiming more rows once the cap is reached mid-batch.
+    if (dailyRemaining <= 0) {
+      const resumeAt = new Date();
+      resumeAt.setUTCHours(24, 0, 0, 0);
+      await pauseForAccountIssue(
+        trusted,
+        userId,
+        campaign.email_account_id,
+        "rate_limit",
+        `Daily send limit reached (${effectiveLimit} emails/day). Sending will resume tomorrow.`,
+        resumeAt.getTime() - Date.now(),
+      );
       break;
     }
 
@@ -780,6 +913,12 @@ export async function processCampaignQueueBatch(
         .update({ last_used_at: new Date().toISOString() })
         .eq("id", resolved.value.accountId)
         .eq("user_id", userId);
+
+      // Increment the daily sent counter and track remaining quota.
+      await incrementDailySentCount(trusted, campaign.email_account_id);
+      if (dailyRemaining !== Infinity) {
+        dailyRemaining--;
+      }
 
       sent++;
       console.info("[QUEUE] Job completed", {

@@ -91,6 +91,60 @@ export async function disconnectEmailAccountAction(
   return { success: "Gmail account disconnected." };
 }
 
+const updateWarmupSchema = z.object({
+  emailAccountId: z.string().uuid(),
+  warmupEnabled: z.boolean(),
+  dailyLimit: z.number().int().min(1).max(2000).nullable(),
+});
+
+export async function updateEmailAccountWarmupAction(
+  payload: z.infer<typeof updateWarmupSchema>,
+): Promise<EmailAccountActionState> {
+  const parsed = updateWarmupSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { error: "Invalid settings." };
+  }
+
+  const { supabase, user } = await requireUser();
+  if (!user) {
+    return { error: "Your session has expired. Please sign in again." };
+  }
+
+  const { warmupEnabled, dailyLimit, emailAccountId } = parsed.data;
+
+  // Determine warmup_start_date: set it when enabling for the first time.
+  let warmupStartDate: string | null | undefined = undefined;
+  if (warmupEnabled) {
+    const { data: existing } = await supabase
+      .from("email_accounts")
+      .select("warmup_start_date, warmup_enabled")
+      .eq("id", emailAccountId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!existing?.warmup_start_date || !existing.warmup_enabled) {
+      warmupStartDate = new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  const { error } = await supabase
+    .from("email_accounts")
+    .update({
+      warmup_enabled: warmupEnabled,
+      daily_send_limit: dailyLimit,
+      ...(warmupStartDate !== undefined ? { warmup_start_date: warmupStartDate } : {}),
+    })
+    .eq("id", emailAccountId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    return { error: "Unable to save settings." };
+  }
+
+  revalidatePath("/settings/email-accounts");
+  return { success: "Sending settings saved." };
+}
+
 export async function sendAccountTestEmailAction(
   _prev: EmailAccountActionState,
   formData: FormData,

@@ -222,6 +222,11 @@ export type Database = {
           last_used_at: string | null;
           created_at: string;
           updated_at: string;
+          daily_send_limit: number | null;
+          today_sent_count: number;
+          last_count_reset_date: string | null;
+          warmup_enabled: boolean;
+          warmup_start_date: string | null;
         };
         Insert: {
           id?: string;
@@ -238,6 +243,11 @@ export type Database = {
           last_used_at?: string | null;
           created_at?: string;
           updated_at?: string;
+          daily_send_limit?: number | null;
+          today_sent_count?: number;
+          last_count_reset_date?: string | null;
+          warmup_enabled?: boolean;
+          warmup_start_date?: string | null;
         };
         Update: {
           id?: string;
@@ -254,6 +264,11 @@ export type Database = {
           last_used_at?: string | null;
           created_at?: string;
           updated_at?: string;
+          daily_send_limit?: number | null;
+          today_sent_count?: number;
+          last_count_reset_date?: string | null;
+          warmup_enabled?: boolean;
+          warmup_start_date?: string | null;
         };
         Relationships: [];
       };
@@ -1501,6 +1516,13 @@ export type Database = {
           p_max_attempts?: number;
         };
         Returns: Json;
+      };
+      increment_daily_sent_count: {
+        Args: {
+          p_account_id: string;
+          p_today: string;
+        };
+        Returns: undefined;
       };
     };
     Enums: {

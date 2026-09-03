@@ -119,7 +119,7 @@ export function getServerEnv(): ServerEnv {
     EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "20",
     EMAIL_QUEUE_CONCURRENCY:
       unquote(process.env.EMAIL_QUEUE_CONCURRENCY) || "1",
-    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "350",
+    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "1500",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
     GMAIL_SEND_TIMEOUT_MS: unquote(process.env.GMAIL_SEND_TIMEOUT_MS) || "20000",
     EMAIL_QUEUE_DRAIN_BUDGET_MS:
@@ -151,7 +151,7 @@ export function getQueueConfig() {
   return {
     batchSize: Number(process.env.EMAIL_QUEUE_BATCH_SIZE || 20),
     concurrency: Number(process.env.EMAIL_QUEUE_CONCURRENCY || 1),
-    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 350),
+    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 1_500),
     maxRetries: Number(process.env.MAX_RETRIES || 3),
     gmailSendTimeoutMs: Number(process.env.GMAIL_SEND_TIMEOUT_MS || 20_000),
     drainBudgetMs: Number(process.env.EMAIL_QUEUE_DRAIN_BUDGET_MS || 25_000),

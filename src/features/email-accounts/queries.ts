@@ -9,7 +9,7 @@ export async function listEmailAccounts(
   const { data, error } = await supabase
     .from("email_accounts")
     .select(
-      "id, provider, email, display_name, status, rate_limited_until, last_error, last_used_at, created_at, updated_at",
+      "id, provider, email, display_name, status, rate_limited_until, last_error, last_used_at, created_at, updated_at, daily_send_limit, today_sent_count, last_count_reset_date, warmup_enabled, warmup_start_date",
     )
     .eq("user_id", userId)
     .neq("status", "disconnected")
@@ -42,7 +42,7 @@ export async function getEmailAccountForUser(
   const { data } = await supabase
     .from("email_accounts")
     .select(
-      "id, provider, email, display_name, status, rate_limited_until, last_error, last_used_at, created_at, updated_at",
+      "id, provider, email, display_name, status, rate_limited_until, last_error, last_used_at, created_at, updated_at, daily_send_limit, today_sent_count, last_count_reset_date, warmup_enabled, warmup_start_date",
     )
     .eq("id", accountId)
     .eq("user_id", userId)
