@@ -23,6 +23,7 @@ import { CampaignForm } from "@/features/campaigns/components/campaign-form";
 import { CampaignRecipientsPanel } from "@/features/campaigns/components/campaign-recipients-panel";
 import { CampaignSequencePanel } from "@/features/campaigns/components/campaign-sequence-panel";
 import { CampaignStatusBadge } from "@/features/campaigns/components/campaign-status-badge";
+import { spamRiskLaunchWarning } from "@/features/campaigns/components/spam-risk-panel";
 import { useLiveSendProgress } from "@/features/campaigns/hooks/use-live-send-progress";
 import { kickEmailQueue } from "@/features/campaigns/queue-events";
 import type { CampaignWorkspaceData } from "@/features/campaigns/queries";
@@ -91,7 +92,15 @@ export function CampaignWorkspace({
       setMessage({ error: "Enroll at least one recipient before launching." });
       return;
     }
-    if (!window.confirm(`Launch this campaign to ${data.members.length} enrolled recipient(s)?`)) return;
+    const spamWarning = spamRiskLaunchWarning({
+      subject: campaign.subject,
+      html: campaign.html_content,
+      text: campaign.text_content,
+    });
+    const confirmMessage = spamWarning
+      ? `${spamWarning}\n\nLaunch this campaign to ${data.members.length} enrolled recipient(s)?`
+      : `Launch this campaign to ${data.members.length} enrolled recipient(s)?`;
+    if (!window.confirm(confirmMessage)) return;
     run(() => startCampaignAction(campaign.id, "all"));
   }
 
@@ -197,6 +206,12 @@ export function CampaignWorkspace({
           {campaign.pause_reason === "auth_required" ? (
             <> <Link className="underline" href="/settings/email-accounts">Reconnect Gmail</Link>.</>
           ) : null}
+        </Alert>
+      ) : null}
+      {isDraft ? (
+        <Alert variant="info">
+          Warm-up and this spam-risk check reduce obvious problems. They do not
+          guarantee inbox delivery from personal Gmail.
         </Alert>
       ) : null}
 

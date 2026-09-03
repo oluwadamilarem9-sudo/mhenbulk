@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RichTextEditor } from "@/features/campaigns/components/rich-text-editor";
+import { SpamRiskPanel } from "@/features/campaigns/components/spam-risk-panel";
 import { contactDisplayName } from "@/features/contacts/format";
 
 const initialState: CampaignActionState = {};
@@ -54,6 +55,11 @@ export function CampaignForm({
   const action = campaign ? updateCampaignAction : createCampaignAction;
   const [state, formAction, pending] = useActionState(action, initialState);
   const preselected = new Set(preselectedContactIds);
+  const [subject, setSubject] = useState(
+    campaign?.subject?.replaceAll("\u200B", "").trim() || "",
+  );
+  const [htmlContent, setHtmlContent] = useState(campaign?.html_content ?? "");
+  const [textContent, setTextContent] = useState(campaign?.text_content ?? "");
 
   return (
     <form action={formAction} className="space-y-5">
@@ -95,9 +101,8 @@ export function CampaignForm({
           <Input
             id="subject"
             name="subject"
-            defaultValue={
-              campaign?.subject?.replaceAll("\u200B", "").trim() || ""
-            }
+            value={subject}
+            onChange={(event) => setSubject(event.target.value)}
             placeholder="Hi {{first_name}}, here's what's new"
           />
           <p className="text-xs text-slate-500">
@@ -116,6 +121,7 @@ export function CampaignForm({
           name="htmlContent"
           initialValue={campaign?.html_content}
           placeholder="Write the email you want people to receive..."
+          onHtmlChange={setHtmlContent}
         />
         {state.fieldErrors?.htmlContent?.[0] ? (
           <p className="text-xs text-rose-600">{state.fieldErrors.htmlContent[0]}</p>
@@ -133,7 +139,8 @@ export function CampaignForm({
         <Textarea
           id="textContent"
           name="textContent"
-          defaultValue={campaign?.text_content ?? ""}
+          value={textContent}
+          onChange={(event) => setTextContent(event.target.value)}
           placeholder="Hello {{first_name}}, write a no-formatting fallback here if you want one..."
           rows={5}
         />
@@ -145,6 +152,8 @@ export function CampaignForm({
           cannot show HTML. Most people can leave it empty.
         </p>
       </div>
+
+      <SpamRiskPanel subject={subject} html={htmlContent} text={textContent} />
 
       {!campaign ? (
         <fieldset className="space-y-2">

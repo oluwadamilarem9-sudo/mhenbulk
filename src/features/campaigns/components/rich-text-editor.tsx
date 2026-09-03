@@ -30,6 +30,7 @@ type RichTextEditorProps = {
   name: string;
   initialValue?: string;
   placeholder?: string;
+  onHtmlChange?: (html: string) => void;
 };
 
 const PERSONALIZATION_TOKENS = [
@@ -42,6 +43,7 @@ export function RichTextEditor({
   name,
   initialValue = "",
   placeholder = "Write your email message...",
+  onHtmlChange,
 }: RichTextEditorProps) {
   const [html, setHtml] = useState(initialValue);
   const [sourceMode, setSourceMode] = useState(false);
@@ -70,7 +72,9 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: currentEditor }) => {
-      setHtml(currentEditor.getHTML());
+      const nextHtml = currentEditor.getHTML();
+      setHtml(nextHtml);
+      onHtmlChange?.(nextHtml);
     },
   });
 
