@@ -25,7 +25,7 @@ const serverEnvSchema = publicEnvSchema.extend({
   EMAIL_ACCOUNT_ENCRYPTION_KEY: z.string().optional(),
   EMAIL_QUEUE_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(20),
   EMAIL_QUEUE_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(1),
-  EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(350),
+  EMAIL_SEND_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(3_000),
   MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(3),
   GMAIL_SEND_TIMEOUT_MS: z.coerce
     .number()
@@ -119,7 +119,7 @@ export function getServerEnv(): ServerEnv {
     EMAIL_QUEUE_BATCH_SIZE: unquote(process.env.EMAIL_QUEUE_BATCH_SIZE) || "20",
     EMAIL_QUEUE_CONCURRENCY:
       unquote(process.env.EMAIL_QUEUE_CONCURRENCY) || "1",
-    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "1500",
+    EMAIL_SEND_DELAY_MS: unquote(process.env.EMAIL_SEND_DELAY_MS) || "3000",
     MAX_RETRIES: unquote(process.env.MAX_RETRIES) || "3",
     GMAIL_SEND_TIMEOUT_MS: unquote(process.env.GMAIL_SEND_TIMEOUT_MS) || "20000",
     EMAIL_QUEUE_DRAIN_BUDGET_MS:
@@ -151,7 +151,7 @@ export function getQueueConfig() {
   return {
     batchSize: Number(process.env.EMAIL_QUEUE_BATCH_SIZE || 20),
     concurrency: Number(process.env.EMAIL_QUEUE_CONCURRENCY || 1),
-    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 1_500),
+    sendDelayMs: Number(process.env.EMAIL_SEND_DELAY_MS || 3_000),
     maxRetries: Number(process.env.MAX_RETRIES || 3),
     gmailSendTimeoutMs: Number(process.env.GMAIL_SEND_TIMEOUT_MS || 20_000),
     drainBudgetMs: Number(process.env.EMAIL_QUEUE_DRAIN_BUDGET_MS || 25_000),

@@ -400,8 +400,10 @@ export function CampaignWorkspace({
       {activeTab === "analytics" ? (
         <div className="space-y-6">
           <Alert variant="warning">
-            These are verified queue and provider events only. Gmail acceptance is not proof
-            of inbox delivery, and opens/clicks remain zero unless a provider reports them.
+            Gmail acceptance is not inbox delivery. We cannot detect the spam
+            folder — only opens (tracking pixel), replies, and failures. Opens
+            mean the image loaded; spam folders often block images, so low opens
+            can mean spam, blocked images, or unread mail.
           </Alert>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Accepted" value={stats.sent} />
@@ -409,9 +411,9 @@ export function CampaignWorkspace({
             <Metric label="Skipped" value={stats.skipped} />
             <Metric label="Replies recorded" value={data.replies} />
             <Metric label="Provider delivered" value={data.engagement.delivered} />
-            <Metric label="Provider opens" value={data.engagement.opened} />
+            <Metric label="Opens tracked" value={data.engagement.opened} />
             <Metric label="Provider clicks" value={data.engagement.clicked} />
-            <Metric label="Complaints" value={data.engagement.complained} />
+            <Metric label="Spam complaints" value={data.engagement.complained} />
           </div>
           {data.failures.length ? (
             <Card>

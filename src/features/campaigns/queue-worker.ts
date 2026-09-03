@@ -12,6 +12,7 @@ import { userFacingEmailError } from "@/lib/email/errors";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 import { buildUnsubscribeUrl } from "@/lib/email/unsubscribe";
+import { appendOpenTrackPixel } from "@/lib/email/open-track";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -821,6 +822,8 @@ export async function processCampaignQueueBatch(
         email: contact.email,
       },
     });
+    // Invisible open pixel — records when the image loads. Not spam-folder proof.
+    const trackedHtml = appendOpenTrackPixel(rendered.html, recipient.id);
 
     console.info("[QUEUE] Gmail request started", {
       jobId: recipient.id,
@@ -831,7 +834,7 @@ export async function processCampaignQueueBatch(
     const result = await provider.send({
       to: recipient.to_email,
       subject: rendered.subject,
-      html: rendered.html,
+      html: trackedHtml,
       text: rendered.text,
       from: resolved.value.email,
       fromName: resolved.value.displayName ?? undefined,
