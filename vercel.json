@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/process-email-queue",
-      "schedule": "*/2 * * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/cron/process-email-finder-queue",
