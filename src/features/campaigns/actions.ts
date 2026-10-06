@@ -508,6 +508,7 @@ export async function sendTestEmailAction(
       first_name: "Test",
       last_name: "Recipient",
       email: parsed.data.to,
+      company: "Example Co",
     },
   });
 

@@ -587,7 +587,7 @@ export async function processCampaignQueueBatch(
     supabase
       .from("contacts")
       .select(
-        "id, first_name, last_name, email, email_normalized, status, is_unsubscribed, is_suppressed",
+        "id, first_name, last_name, email, email_normalized, company, status, is_unsubscribed, is_suppressed",
       )
       .eq("user_id", userId)
       .in("id", contactIds),
@@ -799,6 +799,7 @@ export async function processCampaignQueueBatch(
         first_name: contact.first_name,
         last_name: contact.last_name,
         email: contact.email,
+        company: contact.company,
       },
     });
     // Invisible open pixel — records when the image loads. Not spam-folder proof.

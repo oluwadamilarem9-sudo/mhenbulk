@@ -326,6 +326,8 @@ export type Database = {
           started_at: string | null;
           paused_at: string | null;
           completed_at: string | null;
+          variant_b_subject: string | null;
+          variant_b_html: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -347,6 +349,8 @@ export type Database = {
           started_at?: string | null;
           paused_at?: string | null;
           completed_at?: string | null;
+          variant_b_subject?: string | null;
+          variant_b_html?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -368,6 +372,8 @@ export type Database = {
           started_at?: string | null;
           paused_at?: string | null;
           completed_at?: string | null;
+          variant_b_subject?: string | null;
+          variant_b_html?: string | null;
           created_at?: string;
           updated_at?: string;
         };

@@ -34,8 +34,10 @@ type RichTextEditorProps = {
 };
 
 const PERSONALIZATION_TOKENS = [
+  { label: "Name", value: "{{name}}" },
   { label: "First name", value: "{{first_name}}" },
   { label: "Last name", value: "{{last_name}}" },
+  { label: "Company", value: "{{company}}" },
   { label: "Email", value: "{{email}}" },
 ] as const;
 

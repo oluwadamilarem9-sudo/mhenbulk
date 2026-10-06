@@ -57,6 +57,7 @@ export default async function CampaignPage({ params, searchParams }: CampaignPag
       first_name: "Jane",
       last_name: "Doe",
       email: "jane@example.com",
+      company: "Acme",
     },
   });
 

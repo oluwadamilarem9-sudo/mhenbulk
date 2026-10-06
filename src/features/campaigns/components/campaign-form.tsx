@@ -127,8 +127,8 @@ export function CampaignForm({
           <p className="text-xs text-rose-600">{state.fieldErrors.htmlContent[0]}</p>
         ) : null}
         <p className="text-xs text-slate-500">
-          Format your message with the toolbar and insert personalization with one
-          click. Recipients see exactly this — nothing is appended to the body.
+          Format your message with the toolbar. Insert {{name}}, {{company}}, or {{email}}.
+          Recipients see exactly this — nothing is appended to the body.
         </p>
       </div>
 

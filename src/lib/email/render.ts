@@ -10,23 +10,29 @@ export type PersonalizationVars = {
   first_name: string;
   last_name: string;
   email: string;
+  company?: string | null;
+  website?: string | null;
 };
 
-const TOKEN_PATTERN = /\{\{\s*([a-zA-Z_]+)\s*\}\}/g;
+const TOKEN_PATTERN = /\{\{?\s*([a-zA-Z_]+)\s*\}?\}/g;
+
+function tokenValue(key: string, vars: PersonalizationVars): string | null {
+  const normalized = key.toLowerCase();
+  if (normalized === "first_name" || normalized === "name") return vars.first_name ?? "";
+  if (normalized === "last_name") return vars.last_name ?? "";
+  if (normalized === "email") return vars.email ?? "";
+  if (normalized === "company") return vars.company ?? "";
+  if (normalized === "website") return vars.website ?? "";
+  if (normalized === "full_name") {
+    return `${vars.first_name} ${vars.last_name}`.trim();
+  }
+  return null;
+}
 
 export function renderTemplate(template: string, vars: PersonalizationVars): string {
   return template.replace(TOKEN_PATTERN, (match, key: string) => {
-    const normalized = key.toLowerCase() as keyof PersonalizationVars;
-
-    if (normalized === "first_name" || normalized === "last_name" || normalized === "email") {
-      return vars[normalized] ?? "";
-    }
-
-    if (normalized === ("full_name" as string)) {
-      return `${vars.first_name} ${vars.last_name}`.trim();
-    }
-
-    return match;
+    const value = tokenValue(key, vars);
+    return value === null ? match : value;
   });
 }
 

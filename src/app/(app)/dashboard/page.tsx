@@ -11,8 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { StatsCards } from "@/features/dashboard/components/stats-cards";
-import { getDashboardMetrics } from "@/features/dashboard/queries";
+import { DayTrackerCard, StatsCards } from "@/features/dashboard/components/stats-cards";
+import { getDashboardMetrics, getDayTracker } from "@/features/dashboard/queries";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
@@ -25,7 +25,10 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const { metrics, error } = await getDashboardMetrics(user.id);
+  const [{ metrics, error }, tracker] = await Promise.all([
+    getDashboardMetrics(user.id),
+    getDayTracker(user.id),
+  ]);
   const isEmpty =
     metrics.totalContacts === 0 &&
     metrics.totalCampaigns === 0 &&
@@ -67,6 +70,7 @@ export default async function DashboardPage() {
       {error ? <Alert variant="error">{error}</Alert> : null}
 
       <StatsCards metrics={metrics} />
+      <DayTrackerCard tracker={tracker} />
 
       {isEmpty && !error ? (
         <Card>

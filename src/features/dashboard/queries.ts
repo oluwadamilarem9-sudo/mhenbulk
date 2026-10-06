@@ -107,3 +107,108 @@ export async function getDashboardMetrics(userId: string): Promise<{
     },
   };
 }
+
+export type DayTracker = {
+  sent24h: number;
+  failed24h: number;
+  queuedNow: number;
+  peakHourLabel: string;
+  peakHourCount: number;
+  streakDays: number;
+};
+
+const emptyTracker: DayTracker = {
+  sent24h: 0,
+  failed24h: 0,
+  queuedNow: 0,
+  peakHourLabel: "—",
+  peakHourCount: 0,
+  streakDays: 0,
+};
+
+export async function getDayTracker(userId: string): Promise<DayTracker> {
+  const supabase = await createClient();
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const streakStart = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [sentResult, failedResult, queuedResult, recentSends] = await Promise.all([
+    supabase
+      .from("campaign_recipients")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "sent")
+      .gte("sent_at", since),
+    supabase
+      .from("campaign_recipients")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("status", ["failed", "bounced"])
+      .gte("failed_at", since),
+    supabase
+      .from("campaign_recipients")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("status", ["pending", "queued", "sending"]),
+    supabase
+      .from("campaign_recipients")
+      .select("sent_at")
+      .eq("user_id", userId)
+      .eq("status", "sent")
+      .gte("sent_at", streakStart)
+      .order("sent_at", { ascending: false })
+      .limit(5000),
+  ]);
+
+  if (sentResult.error || recentSends.error) {
+    return emptyTracker;
+  }
+
+  const hours = new Array<number>(24).fill(0);
+  const sentDays = new Set<string>();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  for (const row of recentSends.data ?? []) {
+    if (!row.sent_at) continue;
+    const at = new Date(row.sent_at).getTime();
+    if (Number.isNaN(at)) continue;
+    sentDays.add(new Date(at).toISOString().slice(0, 10));
+    if (now - at <= dayMs) {
+      hours[new Date(at).getUTCHours()] += 1;
+    }
+  }
+
+  let peakHour = 0;
+  let peakCount = 0;
+  hours.forEach((count, hour) => {
+    if (count > peakCount) {
+      peakCount = count;
+      peakHour = hour;
+    }
+  });
+
+  let streak = 0;
+  const cursor = new Date();
+  cursor.setUTCHours(0, 0, 0, 0);
+  if (!sentDays.has(cursor.toISOString().slice(0, 10))) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  while (sentDays.has(cursor.toISOString().slice(0, 10))) {
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  const peakLabel =
+    peakCount === 0
+      ? "No sends yet"
+      : `${String(peakHour).padStart(2, "0")}:00–${String(peakHour).padStart(2, "0")}:59 UTC`;
+
+  return {
+    sent24h: sentResult.count ?? 0,
+    failed24h: failedResult.error ? 0 : (failedResult.count ?? 0),
+    queuedNow: queuedResult.error ? 0 : (queuedResult.count ?? 0),
+    peakHourLabel: peakLabel,
+    peakHourCount: peakCount,
+    streakDays: streak,
+  };
+}
