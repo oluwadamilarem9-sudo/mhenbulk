@@ -124,14 +124,14 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
             className="h-4 w-4 rounded border-slate-300 text-indigo-600"
           />
           <label htmlFor={`warmup-${account.id}`} className="text-sm text-slate-700 cursor-pointer">
-            Enable warm-up schedule (auto-increase limit over 5 weeks)
+            Enable warm-up schedule (200/day, then 300/day, then no app cap)
           </label>
         </div>
 
         <div className="flex items-end gap-3">
           <div className="space-y-1 flex-1">
             <Label htmlFor={`limit-${account.id}`} className="text-xs text-slate-600">
-              Manual daily limit (leave blank = no cap)
+              Manual daily limit (leave blank to use warm-up, or no cap)
             </Label>
             <Input
               id={`limit-${account.id}`}
@@ -159,7 +159,7 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
         <p className="text-xs font-medium text-amber-800">💡 Deliverability tip</p>
         <p className="mt-1 text-xs text-amber-700">
-          Gmail personal accounts are flagged for bulk sending. Enable warm-up and keep limits low (50–150/day) to avoid spam. For best results, use a custom domain with Google Workspace.
+          A number in the box is a hard stop for the day. Leave it blank if you want more than the warm-up amount. Gmail can still pause the account on its own quota.
         </p>
       </div>
     </div>

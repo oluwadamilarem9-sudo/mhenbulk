@@ -11,6 +11,7 @@ import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
+import { effectiveDailySendLimit } from "@/lib/email/daily-limit";
 import { buildUnsubscribeUrl } from "@/lib/email/unsubscribe";
 import { appendOpenTrackPixel } from "@/lib/email/open-track";
 import { createServiceRoleClient } from "@/lib/supabase/server";
@@ -32,23 +33,9 @@ function utcDateString(): string {
 }
 
 /**
- * Compute the current warm-up daily limit based on how many days have elapsed
- * since warmup_start_date.  Returns null when the warm-up period is over.
- */
-function warmupDailyLimit(warmupStartDate: string): number | null {
-  const start = new Date(warmupStartDate).getTime();
-  const days = Math.floor((Date.now() - start) / 86_400_000);
-  if (days < 8)  return 30;
-  if (days < 15) return 75;
-  if (days < 22) return 150;
-  if (days < 29) return 250;
-  if (days < 36) return 400;
-  return null;
-}
-
-/**
  * Resets today_sent_count to 0 if it hasn't been reset today yet, then
- * returns the account's effective daily limit (warmup overrides manual limit).
+ * returns the account's effective daily limit.
+ * A manual limit wins. Warm-up only applies when the manual field is blank.
  *
  * Returns null when there is no cap (send freely).
  */
@@ -82,15 +69,7 @@ async function resetAndGetDailyLimit(
     todaySent = 0;
   }
 
-  // Warm-up limit takes precedence over manual limit.
-  let effectiveLimit: number | null = account.daily_send_limit ?? null;
-  if (account.warmup_enabled && account.warmup_start_date) {
-    const wuLimit = warmupDailyLimit(account.warmup_start_date);
-    if (wuLimit !== null) {
-      effectiveLimit =
-        effectiveLimit === null ? wuLimit : Math.min(effectiveLimit, wuLimit);
-    }
-  }
+  const effectiveLimit = effectiveDailySendLimit(account);
 
   return { effectiveLimit, todaySent };
 }

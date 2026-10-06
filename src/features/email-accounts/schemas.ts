@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  effectiveDailySendLimit,
+  warmupStageLabel,
+} from "@/lib/email/daily-limit";
 import type { EmailAccountStatus } from "@/lib/supabase/database.types";
 
 export const testEmailSchema = z.object({
@@ -30,38 +34,19 @@ export type EmailAccountPublic = {
   warmup_start_date: string | null;
 };
 
-/** Computes the effective daily limit for display purposes (warm-up overrides manual). */
-export function getEffectiveDailyLimit(account: Pick<EmailAccountPublic, "daily_send_limit" | "warmup_enabled" | "warmup_start_date">): number | null {
-  let limit = account.daily_send_limit;
-
-  if (account.warmup_enabled && account.warmup_start_date) {
-    const start = new Date(account.warmup_start_date).getTime();
-    const days = Math.floor((Date.now() - start) / 86_400_000);
-    const wuLimit =
-      days < 8  ? 30  :
-      days < 15 ? 75  :
-      days < 22 ? 150 :
-      days < 29 ? 250 :
-      days < 36 ? 400 :
-      null;
-    if (wuLimit !== null) {
-      limit = limit === null ? wuLimit : Math.min(limit, wuLimit);
-    }
-  }
-
-  return limit;
+/** Daily cap shown in settings. A typed limit wins over warm-up. */
+export function getEffectiveDailyLimit(
+  account: Pick<
+    EmailAccountPublic,
+    "daily_send_limit" | "warmup_enabled" | "warmup_start_date"
+  >,
+): number | null {
+  return effectiveDailySendLimit(account);
 }
 
 /** Label for the current warm-up stage. */
 export function getWarmupStageLabel(warmupStartDate: string): string {
-  const start = new Date(warmupStartDate).getTime();
-  const days = Math.floor((Date.now() - start) / 86_400_000);
-  if (days < 8)  return "Week 1 — 30/day";
-  if (days < 15) return "Week 2 — 75/day";
-  if (days < 22) return "Week 3 — 150/day";
-  if (days < 29) return "Week 4 — 250/day";
-  if (days < 36) return "Week 5 — 400/day";
-  return "Warm-up complete";
+  return warmupStageLabel(warmupStartDate);
 }
 
 export type EmailAccountActionState = {
