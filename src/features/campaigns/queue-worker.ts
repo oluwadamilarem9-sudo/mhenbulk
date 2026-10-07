@@ -7,6 +7,7 @@ import {
   type QueueBatchResult,
 } from "@/features/campaigns/schemas";
 import { materializeDueAutomatedRecipients } from "@/features/campaigns/sequence-scheduler";
+import { resolveInitialExperimentMessage } from "@/features/campaigns/experiment-resolve";
 import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { renderCampaignEmail } from "@/lib/email/render";
@@ -775,6 +776,71 @@ export async function processCampaignQueueBatch(
       continue;
     }
 
+    const experimentMessage = await resolveInitialExperimentMessage(supabase, {
+      userId,
+      campaignId: campaign.id,
+      recipientId: recipient.id,
+      stepType: step.step_type,
+    });
+
+    if (experimentMessage.action === "wait") {
+      await supabase
+        .from("campaign_recipients")
+        .update({
+          status: "queued",
+          last_error: experimentMessage.reason,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+          claimed_at: null,
+          claim_expires_at: null,
+          claim_token: null,
+        })
+        .eq("id", recipient.id)
+        .eq("user_id", userId)
+        .eq("claim_token", claimToken);
+      continue;
+    }
+
+    if (experimentMessage.action === "fail") {
+      await supabase
+        .from("campaign_recipients")
+        .update({
+          status: "failed",
+          attempt_count: recipient.attempt_count + 1,
+          failed_at: new Date().toISOString(),
+          last_error: experimentMessage.reason,
+          next_attempt_at: null,
+          claimed_at: null,
+          claim_expires_at: null,
+          claim_token: null,
+        })
+        .eq("id", recipient.id)
+        .eq("user_id", userId)
+        .eq("claim_token", claimToken);
+      await supabase.from("email_events").insert({
+        user_id: userId,
+        campaign_id: campaign.id,
+        campaign_step_id: recipient.campaign_step_id,
+        campaign_recipient_id: recipient.id,
+        contact_id: recipient.contact_id,
+        event_type: "failed",
+        metadata: { reason: experimentMessage.reason },
+      });
+      failed++;
+      continue;
+    }
+
+    const variantId = experimentMessage.action === "send" ? experimentMessage.variant.id : null;
+    const messageSubject =
+      experimentMessage.action === "send" ? experimentMessage.variant.subject : step.subject;
+    const messageHtml =
+      experimentMessage.action === "send"
+        ? experimentMessage.variant.html_content
+        : step.html_content;
+    const messageText =
+      experimentMessage.action === "send"
+        ? experimentMessage.variant.text_content
+        : step.text_content;
+
     const unsubscribeUrl = buildUnsubscribeUrl(contact.id);
     let threadId = recipient.provider_thread_id;
     if (!threadId && step.step_type !== "initial") {
@@ -792,9 +858,9 @@ export async function processCampaignQueueBatch(
       threadId = previousSend?.provider_thread_id ?? null;
     }
     const rendered = renderCampaignEmail({
-      subject: subjectForSend(step.subject),
-      htmlContent: step.html_content,
-      textContent: step.text_content,
+      subject: subjectForSend(messageSubject),
+      htmlContent: messageHtml,
+      textContent: messageText,
       vars: {
         first_name: contact.first_name,
         last_name: contact.last_name,
@@ -877,6 +943,7 @@ export async function processCampaignQueueBatch(
         event_type: "sent",
         provider: result.provider,
         provider_message_id: result.messageId ?? null,
+        metadata: variantId ? { experiment_variant_id: variantId } : {},
       });
       await supabase.from("campaign_activity").insert({
         user_id: userId,
@@ -888,6 +955,7 @@ export async function processCampaignQueueBatch(
         metadata: {
           provider: result.provider,
           provider_message_id: result.messageId ?? null,
+          ...(variantId ? { experiment_variant_id: variantId } : {}),
         },
       });
 

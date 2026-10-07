@@ -19,6 +19,7 @@ import {
   sendTestEmailAction,
   startCampaignAction,
 } from "@/features/campaigns/actions";
+import { CampaignExperimentPanel } from "@/features/campaigns/components/campaign-experiment-panel";
 import { CampaignForm } from "@/features/campaigns/components/campaign-form";
 import { CampaignRecipientsPanel } from "@/features/campaigns/components/campaign-recipients-panel";
 import { CampaignSequencePanel } from "@/features/campaigns/components/campaign-sequence-panel";
@@ -29,7 +30,7 @@ import { kickEmailQueue } from "@/features/campaigns/queue-events";
 import type { CampaignWorkspaceData } from "@/features/campaigns/queries";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { subjectForDisplay } from "@/features/campaigns/schemas";
-import { CAMPAIGN_TABS, type CampaignTab } from "@/features/campaigns/tabs";
+import { CAMPAIGN_TAB_LABELS, CAMPAIGN_TABS, type CampaignTab } from "@/features/campaigns/tabs";
 import type { EmailAccountPublic } from "@/features/email-accounts/schemas";
 import { formatNumber } from "@/lib/utils";
 
@@ -107,6 +108,23 @@ export function CampaignWorkspace({
   function removeCampaign() {
     if (!window.confirm(`Delete campaign "${campaign.name}"? This cannot be undone.`)) return;
     run(() => deleteCampaignAction(campaign.id), () => router.push("/campaigns"));
+  }
+
+  function ExperimentEditor() {
+    return (
+      <CampaignExperimentPanel
+        key={
+          data.experiment
+            ? `${data.experiment.id}:${data.experiment.status}:${data.experiment.variants.map((variant) => variant.id).join(",")}`
+            : "new"
+        }
+        campaignId={campaign.id}
+        campaignSubject={campaign.subject}
+        campaignHtml={campaign.html_content}
+        experiment={data.experiment}
+        loadError={data.experimentError}
+      />
+    );
   }
 
   return (
@@ -220,13 +238,13 @@ export function CampaignWorkspace({
           <Link
             key={tab}
             href={`/campaigns/${campaign.id}?tab=${tab}`}
-            className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium capitalize ${
+            className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium ${
               activeTab === tab
                 ? "border-indigo-600 text-indigo-700"
                 : "border-transparent text-slate-500 hover:text-slate-900"
             }`}
           >
-            {tab}
+            {CAMPAIGN_TAB_LABELS[tab]}
           </Link>
         ))}
       </nav>
@@ -366,6 +384,8 @@ export function CampaignWorkspace({
         />
       ) : null}
 
+      {activeTab === "experiment" ? <ExperimentEditor /> : null}
+
       {activeTab === "activity" ? (
         <Card>
           <CardHeader>
@@ -434,24 +454,29 @@ export function CampaignWorkspace({
       ) : null}
 
       {activeTab === "settings" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Campaign settings</CardTitle>
-            <CardDescription>
-              {isDraft ? "Edit internal name, sender, subject, and initial message." : "Settings are locked after launch."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isDraft ? <CampaignForm campaign={campaign} emailAccounts={accounts} /> : (
-              <dl className="space-y-3 text-sm">
-                <Setting label="Internal name" value={campaign.name} />
-                <Setting label="Subject" value={subjectForDisplay(campaign.subject)} />
-                <Setting label="Timezone" value={campaign.timezone} />
-                <Setting label="Sender" value={senderLabel ?? "Not connected"} />
-              </dl>
-            )}
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <ExperimentEditor />
+          <Card>
+            <CardHeader>
+              <CardTitle>Campaign settings</CardTitle>
+              <CardDescription>
+                {isDraft
+                  ? "This is the original message, used when the A/B test is off. The boxes above are the extra versions."
+                  : "Settings are locked after launch."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isDraft ? <CampaignForm campaign={campaign} emailAccounts={accounts} /> : (
+                <dl className="space-y-3 text-sm">
+                  <Setting label="Internal name" value={campaign.name} />
+                  <Setting label="Subject" value={subjectForDisplay(campaign.subject)} />
+                  <Setting label="Timezone" value={campaign.timezone} />
+                  <Setting label="Sender" value={senderLabel ?? "Not connected"} />
+                </dl>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       ) : null}
     </div>
   );

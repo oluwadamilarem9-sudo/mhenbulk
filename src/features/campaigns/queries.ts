@@ -1,3 +1,4 @@
+import { loadCampaignExperiment, type CampaignExperimentView } from "@/features/campaigns/experiment-queries";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -81,6 +82,8 @@ export type CampaignWorkspaceData = {
   replies: number;
   batches: CampaignBatchOption[];
   defaultBatchSize: number;
+  experiment: CampaignExperimentView | null;
+  experimentError?: string;
 };
 
 export type CampaignStats = {
@@ -346,6 +349,17 @@ export async function getCampaignWorkspace(
     }];
   });
 
+  const experimentResult = await loadCampaignExperiment(
+    supabase,
+    userId,
+    campaignId,
+    (recipientRows ?? []).map((recipient) => ({
+      id: recipient.id,
+      status: recipient.status,
+      replied_at: recipient.replied_at,
+    })),
+  );
+
   return {
     campaign: base.campaign as CampaignWorkspaceData["campaign"],
     stats: base.stats,
@@ -385,5 +399,7 @@ export async function getCampaignWorkspace(
       };
     }),
     defaultBatchSize: profile?.default_batch_size ?? 50,
+    experiment: experimentResult.experiment,
+    experimentError: experimentResult.error,
   };
 }

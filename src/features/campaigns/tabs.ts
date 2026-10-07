@@ -7,10 +7,21 @@ export const CAMPAIGN_TABS = [
   "overview",
   "recipients",
   "sequence",
+  "experiment",
   "activity",
   "analytics",
   "settings",
 ] as const;
+
+export const CAMPAIGN_TAB_LABELS: Record<(typeof CAMPAIGN_TABS)[number], string> = {
+  overview: "Overview",
+  recipients: "Recipients",
+  sequence: "Sequence",
+  experiment: "A/B test",
+  activity: "Activity",
+  analytics: "Analytics",
+  settings: "Settings",
+};
 
 export type CampaignTab = (typeof CAMPAIGN_TABS)[number];
 

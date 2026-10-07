@@ -49,6 +49,10 @@ export type CampaignStepAudienceMode =
   | "not_replied"
   | "custom";
 
+export type CampaignExperimentStatus = "draft" | "running" | "paused" | "completed";
+
+export type CampaignExperimentMetric = "opened" | "clicked" | "replied";
+
 export type EmailEventType =
   | "queued"
   | "sent"
@@ -879,6 +883,155 @@ export type Database = {
             columns: ["email_account_id"];
             isOneToOne: false;
             referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_experiments: {
+        Row: {
+          id: string;
+          user_id: string;
+          campaign_id: string;
+          status: CampaignExperimentStatus;
+          primary_metric: CampaignExperimentMetric;
+          started_at: string | null;
+          paused_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          campaign_id: string;
+          status?: CampaignExperimentStatus;
+          primary_metric?: CampaignExperimentMetric;
+          started_at?: string | null;
+          paused_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          campaign_id?: string;
+          status?: CampaignExperimentStatus;
+          primary_metric?: CampaignExperimentMetric;
+          started_at?: string | null;
+          paused_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_experiments_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: true;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_experiment_variants: {
+        Row: {
+          id: string;
+          user_id: string;
+          experiment_id: string;
+          name: string;
+          subject: string;
+          html_content: string;
+          text_content: string | null;
+          allocation_percentage: number;
+          enabled: boolean;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          experiment_id: string;
+          name: string;
+          subject: string;
+          html_content: string;
+          text_content?: string | null;
+          allocation_percentage: number;
+          enabled?: boolean;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          experiment_id?: string;
+          name?: string;
+          subject?: string;
+          html_content?: string;
+          text_content?: string | null;
+          allocation_percentage?: number;
+          enabled?: boolean;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_experiment_variants_experiment_id_fkey";
+            columns: ["experiment_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_experiments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      campaign_experiment_assignments: {
+        Row: {
+          id: string;
+          user_id: string;
+          experiment_id: string;
+          campaign_recipient_id: string;
+          variant_id: string;
+          assigned_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          experiment_id: string;
+          campaign_recipient_id: string;
+          variant_id: string;
+          assigned_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          experiment_id?: string;
+          campaign_recipient_id?: string;
+          variant_id?: string;
+          assigned_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "campaign_experiment_assignments_experiment_id_fkey";
+            columns: ["experiment_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_experiments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_experiment_assignments_campaign_recipient_id_fkey";
+            columns: ["campaign_recipient_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_recipients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaign_experiment_assignments_variant_id_fkey";
+            columns: ["variant_id"];
+            isOneToOne: false;
+            referencedRelation: "campaign_experiment_variants";
             referencedColumns: ["id"];
           },
         ];
