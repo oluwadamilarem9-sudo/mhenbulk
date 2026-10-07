@@ -49,12 +49,13 @@ export function renderCampaignEmail(input: {
   vars: PersonalizationVars;
 }): RenderedEmail {
   const html = renderTemplate(input.htmlContent, input.vars);
+  const providedText = input.textContent ?? "";
 
   return {
     subject: renderTemplate(input.subject, input.vars),
     html,
-    text: input.textContent
-      ? renderTemplate(input.textContent, input.vars)
+    text: providedText.trim()
+      ? renderTemplate(providedText, input.vars)
       : html
           .replace(/<[^>]*>/g, " ")
           .replace(/&nbsp;/gi, " ")

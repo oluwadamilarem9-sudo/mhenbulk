@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   canManageCampaignExperiment,
+  experimentInputSchema,
   nextExperimentStatus,
   validateExperimentDraft,
   validateExperimentForStart,
@@ -14,21 +15,6 @@ import {
 } from "@/features/campaigns/experiment-model";
 import type { CampaignActionState } from "@/features/campaigns/schemas";
 import { createClient } from "@/lib/supabase/server";
-
-const variantSchema = z.object({
-  id: z.string().uuid().optional(),
-  name: z.string().trim().min(1, "Each variant needs a name.").max(80),
-  subject: z.string().trim().min(1).max(300),
-  htmlContent: z.string().trim().min(1).max(200_000),
-  textContent: z.string().trim().max(100_000).optional().or(z.literal("")),
-  allocationPercentage: z.number().int().min(0).max(100),
-  enabled: z.boolean(),
-});
-
-const experimentInputSchema = z.object({
-  primaryMetric: z.enum(["opened", "clicked", "replied"]),
-  variants: z.array(variantSchema).min(2).max(8),
-});
 
 type ExperimentInput = z.infer<typeof experimentInputSchema>;
 
@@ -70,7 +56,7 @@ function toVariantInputs(input: ExperimentInput): ExperimentVariantInput[] {
   return input.variants.map((variant, position) => ({
     id: variant.id ?? `new-${position}`,
     name: variant.name,
-    subject: variant.subject,
+    subject: variant.subject ?? "",
     htmlContent: variant.htmlContent,
     textContent: variant.textContent ?? "",
     allocationPercentage: variant.allocationPercentage,
@@ -145,7 +131,7 @@ async function persistDraft(
       user_id: userId,
       experiment_id: experimentId,
       name: variant.name.trim(),
-      subject: variant.subject.trim(),
+      subject: (variant.subject ?? "").trim(),
       html_content: variant.htmlContent,
       text_content: variant.textContent?.trim() || null,
       allocation_percentage: variant.allocationPercentage,

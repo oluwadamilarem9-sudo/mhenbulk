@@ -13,6 +13,7 @@ import {
   validateExperimentDraft,
   validateExperimentForStart,
   validateExperimentSetup,
+  experimentInputSchema,
   type ExperimentVariantInput,
   type VariantPerformance,
 } from "@/features/campaigns/experiment-model";
@@ -215,6 +216,99 @@ describe("campaign A/B experiments", () => {
     );
     expect(clicks.summary).toContain("not available");
     expect(clicks.significant).toBe(false);
+  });
+
+  it("allows an empty subject and plain-text version, and still requires a message", () => {
+    const variants = [
+      variant({
+        id: "a",
+        name: "A",
+        subject: "",
+        textContent: "",
+        allocationPercentage: 50,
+        position: 0,
+      }),
+      variant({
+        id: "b",
+        name: "B",
+        subject: "Kept subject",
+        textContent: "Kept plain text",
+        allocationPercentage: 50,
+        position: 1,
+      }),
+    ];
+    expect(validateExperimentDraft(variants).ok).toBe(true);
+    expect(validateExperimentForStart(variants).ok).toBe(true);
+    expect(
+      validateExperimentDraft([
+        variant({ id: "a", name: "A", htmlContent: "<p></p>", allocationPercentage: 50, position: 0 }),
+        variant({ id: "b", name: "B", allocationPercentage: 50, position: 1 }),
+      ]).ok,
+    ).toBe(false);
+
+    const parsed = experimentInputSchema.safeParse({
+      primaryMetric: "opened",
+      variants: [
+        {
+          name: "A",
+          subject: "",
+          htmlContent: "<p>Hello there</p>",
+          textContent: "",
+          allocationPercentage: 50,
+          enabled: true,
+        },
+        {
+          name: "B",
+          subject: "Kept subject",
+          htmlContent: "<p>Other message</p>",
+          textContent: "Kept plain text",
+          allocationPercentage: 50,
+          enabled: true,
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.variants[0]?.subject).toBe("");
+    expect(parsed.data.variants[0]?.textContent).toBe("");
+    expect(parsed.data.variants[1]?.subject).toBe("Kept subject");
+    expect(parsed.data.variants[1]?.textContent).toBe("Kept plain text");
+
+    const missingBody = experimentInputSchema.safeParse({
+      primaryMetric: "opened",
+      variants: [
+        { name: "A", subject: "", htmlContent: "", textContent: "", allocationPercentage: 50, enabled: true },
+        { name: "B", subject: "", htmlContent: "<p>Ok</p>", textContent: "", allocationPercentage: 50, enabled: true },
+      ],
+    });
+    expect(missingBody.success).toBe(false);
+  });
+
+  it("derives plain text from the message when the plain-text version is empty", () => {
+    const vars = {
+      first_name: "Ada",
+      last_name: "Lovelace",
+      email: "ada@example.com",
+      company: "Analytical",
+    };
+    const derived = renderCampaignEmail({
+      subject: "",
+      htmlContent: "<p>Hello {{first_name}}</p>",
+      textContent: "",
+      vars,
+    });
+    expect(derived.subject).toBe("");
+    expect(derived.html).toBe("<p>Hello Ada</p>");
+    expect(derived.text).toBe("Hello Ada");
+
+    const kept = renderCampaignEmail({
+      subject: "Exact subject",
+      htmlContent: "<p>Hello</p>",
+      textContent: "Exact plain text",
+      vars,
+    });
+    expect(kept.subject).toBe("Exact subject");
+    expect(kept.text).toBe("Exact plain text");
   });
 
   it("allows only the campaign owner to manage the test", () => {

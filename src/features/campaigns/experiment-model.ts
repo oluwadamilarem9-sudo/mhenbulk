@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const EXPERIMENT_STATUSES = ["draft", "running", "paused", "completed"] as const;
 export type ExperimentStatus = (typeof EXPERIMENT_STATUSES)[number];
 
@@ -16,6 +18,22 @@ export type ExperimentVariantInput = {
   enabled: boolean;
   position: number;
 };
+
+/** Form input for a variant. Empty subject and plain text are allowed; the message is not. */
+export const experimentVariantSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(1, "Each variant needs a name.").max(80),
+  subject: z.string().trim().max(300).optional().or(z.literal("")),
+  htmlContent: z.string().trim().min(1).max(200_000),
+  textContent: z.string().trim().max(100_000).optional().or(z.literal("")),
+  allocationPercentage: z.number().int().min(0).max(100),
+  enabled: z.boolean(),
+});
+
+export const experimentInputSchema = z.object({
+  primaryMetric: z.enum(["opened", "clicked", "replied"]),
+  variants: z.array(experimentVariantSchema).min(2).max(8),
+});
 
 export type VariantPerformance = {
   variantId: string;
@@ -74,9 +92,6 @@ function fieldError(variants: ExperimentVariantInput[]): { ok: false; error: str
     const label = variant.name.trim() || "A variant";
     if (!variant.name.trim()) {
       return { ok: false, error: "Each variant needs a name." };
-    }
-    if (!variant.subject.trim()) {
-      return { ok: false, error: `${label} needs a subject.` };
     }
     if (!visibleText(variant.htmlContent)) {
       return { ok: false, error: `${label} needs a message.` };
