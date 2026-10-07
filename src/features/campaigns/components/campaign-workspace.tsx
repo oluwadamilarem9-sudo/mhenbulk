@@ -110,23 +110,6 @@ export function CampaignWorkspace({
     run(() => deleteCampaignAction(campaign.id), () => router.push("/campaigns"));
   }
 
-  function ExperimentEditor() {
-    return (
-      <CampaignExperimentPanel
-        key={
-          data.experiment
-            ? `${data.experiment.id}:${data.experiment.status}:${data.experiment.variants.map((variant) => variant.id).join(",")}`
-            : "new"
-        }
-        campaignId={campaign.id}
-        campaignSubject={campaign.subject}
-        campaignHtml={campaign.html_content}
-        experiment={data.experiment}
-        loadError={data.experimentError}
-      />
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -329,7 +312,10 @@ export function CampaignWorkspace({
             <Card>
               <CardHeader>
                 <CardTitle>Send a test</CardTitle>
-                <CardDescription>Uses the connected sender and does not enroll the address.</CardDescription>
+                <CardDescription>
+                  Sends the original campaign message, not an A/B variant. It does not enroll
+                  the address.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {testState.error ? <Alert variant="error">{testState.error}</Alert> : null}
@@ -384,7 +370,15 @@ export function CampaignWorkspace({
         />
       ) : null}
 
-      {activeTab === "experiment" ? <ExperimentEditor /> : null}
+      {activeTab === "experiment" ? (
+        <ExperimentEditor
+          campaignId={campaign.id}
+          campaignSubject={campaign.subject}
+          campaignHtml={campaign.html_content}
+          experiment={data.experiment}
+          loadError={data.experimentError}
+        />
+      ) : null}
 
       {activeTab === "activity" ? (
         <Card>
@@ -455,7 +449,13 @@ export function CampaignWorkspace({
 
       {activeTab === "settings" ? (
         <div className="space-y-6">
-          <ExperimentEditor />
+          <ExperimentEditor
+            campaignId={campaign.id}
+            campaignSubject={campaign.subject}
+            campaignHtml={campaign.html_content}
+            experiment={data.experiment}
+            loadError={data.experimentError}
+          />
           <Card>
             <CardHeader>
               <CardTitle>Campaign settings</CardTitle>
@@ -479,6 +479,35 @@ export function CampaignWorkspace({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ExperimentEditor({
+  campaignId,
+  campaignSubject,
+  campaignHtml,
+  experiment,
+  loadError,
+}: {
+  campaignId: string;
+  campaignSubject: string;
+  campaignHtml: string;
+  experiment: CampaignWorkspaceData["experiment"];
+  loadError?: string;
+}) {
+  return (
+    <CampaignExperimentPanel
+      key={
+        experiment
+          ? `${experiment.id}:${experiment.status}:${experiment.variants.map((variant) => variant.id).join(",")}`
+          : "new"
+      }
+      campaignId={campaignId}
+      campaignSubject={campaignSubject}
+      campaignHtml={campaignHtml}
+      experiment={experiment}
+      loadError={loadError}
+    />
   );
 }
 

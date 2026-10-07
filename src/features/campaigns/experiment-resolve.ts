@@ -101,10 +101,7 @@ export async function resolveInitialExperimentMessage(
     };
   }
   if (experiment.status === "completed") {
-    return {
-      action: "fail",
-      reason: "A/B test is completed, so this recipient was not assigned a variant.",
-    };
+    return { action: "campaign" };
   }
 
   const variants: ExperimentVariantInput[] = variantRows.map((variant) => ({

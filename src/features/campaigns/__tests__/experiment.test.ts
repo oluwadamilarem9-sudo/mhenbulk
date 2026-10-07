@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { assignmentBucket, variantForRecipient } from "@/features/campaigns/experiment-assign";
@@ -9,6 +10,8 @@ import {
   nextExperimentStatus,
   pickVariantForBucket,
   rememberAssignment,
+  validateExperimentDraft,
+  validateExperimentForStart,
   validateExperimentSetup,
   type ExperimentVariantInput,
   type VariantPerformance,
@@ -157,17 +160,28 @@ describe("campaign A/B experiments", () => {
     expect(b).toMatchObject({ assigned: 1, sent: 1, clicked: 1, replied: 1, replyRate: "100.0%" });
   });
 
+  it("does not let a 0% variant count as a second participant", () => {
+    const variants = [
+      variant({ id: "a", name: "A", allocationPercentage: 100, position: 0 }),
+      variant({ id: "b", name: "B", allocationPercentage: 0, position: 1 }),
+    ];
+    expect(validateExperimentDraft(variants).ok).toBe(true);
+    expect(validateExperimentForStart(variants).ok).toBe(false);
+    expect(validateExperimentSetup(variants).ok).toBe(false);
+  });
+
   it("does not call a result from one extra event or a tiny sample", () => {
     const small = row("A", 5, 4);
     const other = row("B", 5, 1);
     expect(compareVariantPerformance([small, other], "opened").significant).toBe(false);
-    expect(compareVariantPerformance([small, other], "opened").summary).toBe(
-      "Not enough sends to compare variants.",
-    );
+    expect(compareVariantPerformance([small, other], "opened").summary).toBe("Insufficient data");
 
     const closeA = row("A", 40, 20);
     const closeB = row("B", 40, 21);
-    expect(compareVariantPerformance([closeA, closeB], "opened").significant).toBe(false);
+    const close = compareVariantPerformance([closeA, closeB], "opened");
+    expect(close.significant).toBe(false);
+    expect(close.summary).toContain("Insufficient evidence");
+    expect(close.summary.toLowerCase()).not.toContain("winner");
   });
 
   it("reports a difference only when both variants have enough sends and the gap is large", () => {
@@ -176,8 +190,31 @@ describe("campaign A/B experiments", () => {
       "opened",
     );
     expect(comparison.significant).toBe(true);
+    expect(comparison.summary).toContain("Statistically significant difference");
     expect(comparison.summary).toContain("Variant A");
-    expect(comparison.summary).toContain("not a guarantee");
+    expect(comparison.summary.toLowerCase()).not.toContain("winner");
+  });
+
+  it("handles a 0% versus 100% rate and does not treat unavailable clicks as zero", () => {
+    const extreme = compareVariantPerformance(
+      [row("A", 40, 40), row("B", 40, 0)],
+      "opened",
+    );
+    expect(extreme.significant).toBe(true);
+
+    const tied = compareVariantPerformance(
+      [row("A", 40, 0), row("B", 40, 0)],
+      "opened",
+    );
+    expect(tied.significant).toBe(false);
+
+    const clicks = compareVariantPerformance(
+      [row("A", 80, 0), row("B", 80, 0)],
+      "clicked",
+      { clickTracking: "unavailable" },
+    );
+    expect(clicks.summary).toContain("not available");
+    expect(clicks.significant).toBe(false);
   });
 
   it("allows only the campaign owner to manage the test", () => {
@@ -209,6 +246,28 @@ describe("campaign A/B experiments", () => {
 
   it("exposes the experiment tab", () => {
     expect(parseCampaignTab("experiment")).toBe("experiment");
+  });
+
+  it("requires the campaign ownership chain in experiment policies", () => {
+    for (const file of [
+      "supabase/migrations/0016_campaign_experiments.sql",
+      "supabase/migrations/0017_campaign_experiment_ownership.sql",
+    ]) {
+      const sql = readFileSync(file, "utf8");
+      expect(sql).toContain("experiment_owned_by_current_user");
+      expect(sql).toContain("c.user_id = auth.uid()");
+      expect(sql).toContain("r.campaign_id = e.campaign_id");
+      expect(sql).toContain("v.experiment_id = e.id");
+      expect(sql).toContain("enforce_experiment_owner");
+      expect(sql).toContain("enforce_experiment_assignment_owner");
+      expect(sql).toContain("campaign_experiment_metrics");
+      expect(sql).toContain(
+        "grant execute on function public.campaign_experiment_metrics(uuid) to authenticated, service_role",
+      );
+      expect(sql).toContain("auth.role() = 'service_role'");
+      expect(sql).not.toContain("delete from public.campaigns");
+      expect(sql.toLowerCase()).not.toContain("drop table");
+    }
   });
 });
 

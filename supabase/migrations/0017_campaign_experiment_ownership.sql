@@ -1,8 +1,64 @@
--- Controlled A/B tests for the first email in a campaign.
--- One experiment per campaign. Assignments are permanent for that recipient.
--- Safe to run again: tables are created only if missing, and policies are replaced.
--- Re-running does not delete campaigns, variants, or assignments.
--- A database that already applied the original version of this file must run 0017.
+-- Bring an existing A/B schema up to the ownership and metrics design.
+-- The original 0016 file created the tables with policies that checked only user_id.
+-- It did not create campaign_experiment_metrics, experiment_owned_by_current_user,
+-- or the ownership triggers. This file installs those objects.
+-- Safe to run again. It does not delete campaigns, experiments, variants, or assignments.
+-- If a row's user does not own the related campaign, this script stops and changes nothing.
+
+do $$
+declare
+  experiment_conflicts text;
+  variant_conflicts text;
+  assignment_conflicts text;
+begin
+  if to_regclass('public.campaign_experiments') is null then
+    return;
+  end if;
+
+  select string_agg(e.id::text, ', ' order by e.id)
+    into experiment_conflicts
+  from public.campaign_experiments as e
+  join public.campaigns as c on c.id = e.campaign_id
+  where e.user_id is distinct from c.user_id;
+
+  if to_regclass('public.campaign_experiment_variants') is not null then
+    select string_agg(v.id::text, ', ' order by v.id)
+      into variant_conflicts
+    from public.campaign_experiment_variants as v
+    join public.campaign_experiments as e on e.id = v.experiment_id
+    join public.campaigns as c on c.id = e.campaign_id
+    where v.user_id is distinct from c.user_id
+       or v.user_id is distinct from e.user_id;
+  end if;
+
+  if to_regclass('public.campaign_experiment_assignments') is not null then
+    select string_agg(a.id::text, ', ' order by a.id)
+      into assignment_conflicts
+    from public.campaign_experiment_assignments as a
+    join public.campaign_experiments as e on e.id = a.experiment_id
+    join public.campaigns as c on c.id = e.campaign_id
+    left join public.campaign_recipients as r on r.id = a.campaign_recipient_id
+    left join public.campaign_experiment_variants as v on v.id = a.variant_id
+    where a.user_id is distinct from c.user_id
+       or a.user_id is distinct from e.user_id
+       or r.id is null
+       or r.user_id is distinct from a.user_id
+       or r.campaign_id is distinct from e.campaign_id
+       or v.id is null
+       or v.experiment_id is distinct from e.id
+       or v.user_id is distinct from a.user_id;
+  end if;
+
+  if experiment_conflicts is not null
+     or variant_conflicts is not null
+     or assignment_conflicts is not null then
+    raise exception
+      'Refusing to change A/B ownership while conflicting rows exist. experiments: %; variants: %; assignments: %. No rows were deleted.',
+      coalesce(experiment_conflicts, 'none'),
+      coalesce(variant_conflicts, 'none'),
+      coalesce(assignment_conflicts, 'none');
+  end if;
+end $$;
 
 create table if not exists public.campaign_experiments (
   id uuid primary key default gen_random_uuid(),

@@ -1683,6 +1683,20 @@ export type Database = {
         };
         Returns: undefined;
       };
+      campaign_experiment_metrics: {
+        Args: {
+          p_experiment_id: string;
+        };
+        Returns: {
+          variant_id: string;
+          assigned: number;
+          sent: number;
+          failed: number;
+          opened: number;
+          clicked: number;
+          replied: number;
+        }[];
+      };
     };
     Enums: {
       campaign_status: CampaignStatus;

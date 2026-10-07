@@ -66,15 +66,9 @@ function visibleText(html: string): string {
   return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/gi, " ").trim();
 }
 
-export function validateExperimentSetup(
-  variants: ExperimentVariantInput[],
-): { ok: true } | { ok: false; error: string } {
+function fieldError(variants: ExperimentVariantInput[]): { ok: false; error: string } | null {
   if (variants.length < 2) {
     return { ok: false, error: "An A/B test needs at least two variants." };
-  }
-  const enabled = variants.filter((variant) => variant.enabled);
-  if (enabled.length < 2) {
-    return { ok: false, error: "Enable at least two variants before starting the test." };
   }
   for (const variant of variants) {
     const label = variant.name.trim() || "A variant";
@@ -95,11 +89,47 @@ export function validateExperimentSetup(
       return { ok: false, error: "Allocation percentages must be whole numbers from 0 to 100." };
     }
   }
-  const total = enabled.reduce((sum, variant) => sum + variant.allocationPercentage, 0);
+  return null;
+}
+
+/** Variants that can receive recipients. A 0% row is saved but does not participate. */
+export function participatingVariants<T extends { enabled: boolean; allocationPercentage: number }>(
+  variants: T[],
+): T[] {
+  return variants.filter((variant) => variant.enabled && variant.allocationPercentage > 0);
+}
+
+/** Drafts may include a 0% variant. They do not have to be ready to start. */
+export function validateExperimentDraft(
+  variants: ExperimentVariantInput[],
+): { ok: true } | { ok: false; error: string } {
+  return fieldError(variants) ?? { ok: true };
+}
+
+/** Start and send require two positive allocations that add up to 100%. */
+export function validateExperimentForStart(
+  variants: ExperimentVariantInput[],
+): { ok: true } | { ok: false; error: string } {
+  const fields = fieldError(variants);
+  if (fields) return fields;
+  const participating = participatingVariants(variants);
+  if (participating.length < 2) {
+    return {
+      ok: false,
+      error: "At least two variants need an allocation above 0% before the test can start.",
+    };
+  }
+  const total = participating.reduce((sum, variant) => sum + variant.allocationPercentage, 0);
   if (total !== 100) {
-    return { ok: false, error: "Enabled variant allocations must add up to 100%." };
+    return { ok: false, error: "Allocations above 0% must add up to 100%." };
   }
   return { ok: true };
+}
+
+export function validateExperimentSetup(
+  variants: ExperimentVariantInput[],
+): { ok: true } | { ok: false; error: string } {
+  return validateExperimentForStart(variants);
 }
 
 export function pickVariantForBucket<T extends ExperimentVariantInput>(
@@ -159,40 +189,89 @@ function twoTailedP(z: number): number {
   return Math.min(1, Math.max(0, 2 * (1 - upper)));
 }
 
+/**
+ * Haldane-Anscombe correction keeps a 0% or 100% rate from making the
+ * standard error zero. Every pair among variants with enough sends is tested,
+ * and the p-value cutoff is 0.05 divided by the number of pairs.
+ */
+function correctedZ(
+  successesA: number,
+  sentA: number,
+  successesB: number,
+  sentB: number,
+): number | null {
+  const p1 = (successesA + 0.5) / (sentA + 1);
+  const p2 = (successesB + 0.5) / (sentB + 1);
+  const standardError = Math.sqrt(
+    (p1 * (1 - p1)) / (sentA + 1) + (p2 * (1 - p2)) / (sentB + 1),
+  );
+  if (!Number.isFinite(standardError) || standardError === 0) return null;
+  return (p1 - p2) / standardError;
+}
+
 export function compareVariantPerformance(
   rows: VariantPerformance[],
   metric: ExperimentPrimaryMetric,
+  options?: { clickTracking?: "available" | "unavailable" },
 ): { summary: string; significant: boolean } {
-  const ranked = rows
-    .map((row) => ({ row, rate: metricRate(row, metric) }))
-    .filter((entry): entry is { row: VariantPerformance; rate: number } => entry.rate != null)
-    .sort((a, b) => b.rate - a.rate || a.row.name.localeCompare(b.row.name));
-
-  if (ranked.length < 2 || ranked[0].row.sent < MIN_COMPARE_SENDS || ranked[1].row.sent < MIN_COMPARE_SENDS) {
-    return { summary: "Not enough sends to compare variants.", significant: false };
+  if (metric === "clicked" && options?.clickTracking === "unavailable") {
+    return {
+      summary: "Click tracking is not available for this sending account.",
+      significant: false,
+    };
   }
 
-  const [leader, runnerUp] = ranked;
-  if (leader.rate === runnerUp.rate) {
-    return { summary: "No variant is far enough ahead to call a result.", significant: false };
+  const eligible = rows.filter((row) => row.sent >= MIN_COMPARE_SENDS);
+  if (eligible.length < 2) {
+    return { summary: "Insufficient data", significant: false };
   }
 
-  const leaderHits = metricCount(leader.row, metric);
-  const runnerHits = metricCount(runnerUp.row, metric);
-  const pooled =
-    (leaderHits + runnerHits) / (leader.row.sent + runnerUp.row.sent);
-  const standardError = Math.sqrt(
-    pooled * (1 - pooled) * (1 / leader.row.sent + 1 / runnerUp.row.sent),
-  );
-  if (!Number.isFinite(standardError) || standardError === 0) {
-    return { summary: "No variant is far enough ahead to call a result.", significant: false };
+  const ranked = [...eligible].sort((a, b) => {
+    const rateA = metricRate(a, metric) ?? 0;
+    const rateB = metricRate(b, metric) ?? 0;
+    return rateB - rateA || a.name.localeCompare(b.name);
+  });
+  const leader = ranked[0];
+  const second = ranked[1];
+  const leaderRate = metricRate(leader, metric);
+  const secondRate = metricRate(second, metric);
+  const leading =
+    leaderRate != null && secondRate != null && leaderRate > secondRate
+      ? `Leading: ${leader.name} on ${METRIC_LABEL[metric]}. `
+      : "";
+
+  const pairCount = (eligible.length * (eligible.length - 1)) / 2;
+  const alpha = 0.05 / pairCount;
+  let best: { nameA: string; nameB: string; z: number } | null = null;
+  for (let i = 0; i < eligible.length; i += 1) {
+    for (let j = i + 1; j < eligible.length; j += 1) {
+      const left = eligible[i];
+      const right = eligible[j];
+      const z = correctedZ(
+        metricCount(left, metric),
+        left.sent,
+        metricCount(right, metric),
+        right.sent,
+      );
+      if (z == null || twoTailedP(z) >= alpha) continue;
+      if (!best || Math.abs(z) > Math.abs(best.z)) {
+        const leftRate = metricRate(left, metric) ?? 0;
+        const rightRate = metricRate(right, metric) ?? 0;
+        const ahead = leftRate >= rightRate ? left : right;
+        const behind = ahead === left ? right : left;
+        best = { nameA: ahead.name, nameB: behind.name, z };
+      }
+    }
   }
-  const z = (leader.rate - runnerUp.rate) / standardError;
-  if (twoTailedP(z) >= 0.05) {
-    return { summary: "No variant is far enough ahead to call a result.", significant: false };
+
+  if (!best) {
+    return {
+      summary: `${leading}Insufficient evidence of a statistically significant difference.`.trim(),
+      significant: false,
+    };
   }
   return {
-    summary: `${leader.row.name} has a higher ${METRIC_LABEL[metric]} than ${runnerUp.row.name}. The gap is large enough to treat as a difference. This is not a guarantee for future sends.`,
+    summary: `Statistically significant difference: ${best.nameA} has a higher ${METRIC_LABEL[metric]} than ${best.nameB}.`,
     significant: true,
   };
 }
@@ -203,6 +282,7 @@ export function aggregateVariantPerformance(input: {
   recipients: Array<{ id: string; status: string; replied: boolean }>;
   events: Array<{ recipientId: string; type: string }>;
   primaryMetric: ExperimentPrimaryMetric;
+  clickTracking?: "available" | "unavailable";
 }): { rows: VariantPerformance[]; comparison: { summary: string; significant: boolean } } {
   const recipients = new Map(input.recipients.map((recipient) => [recipient.id, recipient]));
   const opened = new Set<string>();
@@ -240,13 +320,16 @@ export function aggregateVariantPerformance(input: {
       clicked: clickedCount,
       replied,
       openRate: rate(openedCount, sent),
-      clickRate: rate(clickedCount, sent),
+      clickRate:
+        input.clickTracking === "unavailable" ? "Not available" : rate(clickedCount, sent),
       replyRate: rate(replied, sent),
     };
   });
 
   return {
     rows,
-    comparison: compareVariantPerformance(rows, input.primaryMetric),
+    comparison: compareVariantPerformance(rows, input.primaryMetric, {
+      clickTracking: input.clickTracking,
+    }),
   };
 }

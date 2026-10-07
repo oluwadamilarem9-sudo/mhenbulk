@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
@@ -102,6 +102,13 @@ export function CampaignExperimentPanel({
     experiment ? fromExperiment(experiment) : blankVariants(campaignSubject, campaignHtml),
   );
   const locked = experiment != null && experiment.status !== "draft";
+  const experimentStatus = experiment?.status;
+
+  useEffect(() => {
+    if (experimentStatus !== "running" && experimentStatus !== "paused") return;
+    const timer = window.setInterval(() => router.refresh(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [experimentStatus, router]);
   const enabledTotal = variants
     .filter((variant) => variant.enabled)
     .reduce((sum, variant) => sum + variant.allocationPercentage, 0);
@@ -330,9 +337,15 @@ export function CampaignExperimentPanel({
         <Card>
           <CardHeader>
             <CardTitle>Results</CardTitle>
-            <CardDescription>{experiment.comparison}</CardDescription>
+            <CardDescription>
+              {experiment.comparison || "Results are not available yet."}
+              {experiment.clickTracking === "unavailable" && experiment.primaryMetric !== "clicked"
+                ? " Clicks are marked not available because this sending account does not record them."
+                : ""}
+            </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
+            {experiment.resultsError ? <Alert variant="error">{experiment.resultsError}</Alert> : null}
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="text-slate-500">
                 <tr>
@@ -357,7 +370,9 @@ export function CampaignExperimentPanel({
                     <td className="py-2 pr-3">{row.failed}</td>
                     <td className="py-2 pr-3">{row.opened}</td>
                     <td className="py-2 pr-3">{row.openRate}</td>
-                    <td className="py-2 pr-3">{row.clicked}</td>
+                    <td className="py-2 pr-3">
+                      {row.clickRate === "Not available" ? "Not available" : row.clicked}
+                    </td>
                     <td className="py-2 pr-3">{row.clickRate}</td>
                     <td className="py-2 pr-3">{row.replied}</td>
                     <td className="py-2">{row.replyRate}</td>

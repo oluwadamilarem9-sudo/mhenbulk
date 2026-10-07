@@ -349,16 +349,7 @@ export async function getCampaignWorkspace(
     }];
   });
 
-  const experimentResult = await loadCampaignExperiment(
-    supabase,
-    userId,
-    campaignId,
-    (recipientRows ?? []).map((recipient) => ({
-      id: recipient.id,
-      status: recipient.status,
-      replied_at: recipient.replied_at,
-    })),
-  );
+  const experimentResult = await loadCampaignExperiment(supabase, userId, campaignId);
 
   return {
     campaign: base.campaign as CampaignWorkspaceData["campaign"],

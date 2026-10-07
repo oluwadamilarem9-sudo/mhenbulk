@@ -6,7 +6,8 @@ import { z } from "zod";
 import {
   canManageCampaignExperiment,
   nextExperimentStatus,
-  validateExperimentSetup,
+  validateExperimentDraft,
+  validateExperimentForStart,
   type ExperimentPrimaryMetric,
   type ExperimentStatus,
   type ExperimentVariantInput,
@@ -84,7 +85,7 @@ async function persistDraft(
   campaignId: string,
   input: ExperimentInput,
 ) {
-  const setup = validateExperimentSetup(toVariantInputs(input));
+  const setup = validateExperimentDraft(toVariantInputs(input));
   if (!setup.ok) return { error: setup.error };
 
   const { data: existing, error: loadError } = await supabase
@@ -199,8 +200,10 @@ export async function startCampaignExperimentAction(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the variant fields and try again." };
   }
+  const ready = validateExperimentForStart(toVariantInputs(parsed.data));
   const saved = await persistDraft(owned.supabase, owned.userId, owned.campaignId, parsed.data);
   if ("error" in saved) return saved;
+  if (!ready.ok) return { error: ready.error };
   const { data: experiment } = await owned.supabase
     .from("campaign_experiments")
     .select("status")

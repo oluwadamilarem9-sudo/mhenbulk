@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { aggregateVariantPerformance, type ExperimentPrimaryMetric, type ExperimentStatus, type VariantPerformance } from "@/features/campaigns/experiment-model";
+import { compareVariantPerformance, type ExperimentPrimaryMetric, type ExperimentStatus, type VariantPerformance } from "@/features/campaigns/experiment-model";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type CampaignExperimentVariantView = {
@@ -21,6 +21,8 @@ export type CampaignExperimentView = {
   variants: CampaignExperimentVariantView[];
   results: VariantPerformance[];
   comparison: string;
+  clickTracking: "available" | "unavailable";
+  resultsError?: string;
 };
 
 function missingTable(error: { code?: string; message?: string } | null): boolean {
@@ -32,7 +34,6 @@ export async function loadCampaignExperiment(
   supabase: SupabaseClient<Database>,
   userId: string,
   campaignId: string,
-  recipients: Array<{ id: string; status: string; replied_at: string | null }>,
 ): Promise<{ experiment: CampaignExperimentView | null; error?: string }> {
   const { data: experiment, error } = await supabase
     .from("campaign_experiments")
@@ -49,52 +50,95 @@ export async function loadCampaignExperiment(
   }
   if (!experiment) return { experiment: null };
 
-  const [{ data: variants, error: variantError }, { data: assignments }, { data: events }] = await Promise.all([
+  const [
+    { data: variants, error: variantError },
+    { data: metrics, error: metricsError },
+    { data: campaignRow, error: campaignError },
+  ] = await Promise.all([
     supabase
       .from("campaign_experiment_variants")
       .select("id, name, subject, html_content, text_content, allocation_percentage, enabled, position")
       .eq("experiment_id", experiment.id)
       .eq("user_id", userId)
       .order("position", { ascending: true }),
+    supabase.rpc("campaign_experiment_metrics", { p_experiment_id: experiment.id }),
     supabase
-      .from("campaign_experiment_assignments")
-      .select("campaign_recipient_id, variant_id")
-      .eq("experiment_id", experiment.id)
+      .from("campaigns")
+      .select("email_account_id")
+      .eq("id", campaignId)
       .eq("user_id", userId)
-      .limit(10000),
-    supabase
-      .from("email_events")
-      .select("campaign_recipient_id, event_type")
-      .eq("campaign_id", campaignId)
-      .eq("user_id", userId)
-      .in("event_type", ["opened", "clicked"])
-      .limit(10000),
+      .maybeSingle(),
   ]);
 
   if (variantError || !variants) {
     return { experiment: null, error: "Unable to load A/B variants." };
   }
+  if (metricsError || metrics == null) {
+    return {
+      experiment: {
+        id: experiment.id,
+        status: experiment.status as ExperimentStatus,
+        primaryMetric: experiment.primary_metric as ExperimentPrimaryMetric,
+        variants: variants.map((variant) => ({
+          id: variant.id,
+          name: variant.name,
+          subject: variant.subject,
+          htmlContent: variant.html_content,
+          textContent: variant.text_content ?? "",
+          allocationPercentage: variant.allocation_percentage,
+          enabled: variant.enabled,
+          position: variant.position,
+        })),
+        results: [],
+        comparison: "",
+        clickTracking: "unavailable",
+        resultsError: "Unable to calculate A/B results.",
+      },
+    };
+  }
+  if (campaignError) {
+    return { experiment: null, error: "Unable to load the sending account for this test." };
+  }
+
+  let clickTracking: "available" | "unavailable" = "unavailable";
+  if (campaignRow?.email_account_id) {
+    const { data: account, error: accountError } = await supabase
+      .from("email_accounts")
+      .select("provider")
+      .eq("id", campaignRow.email_account_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (accountError) {
+      return { experiment: null, error: "Unable to load the sending account for this test." };
+    }
+    if (account?.provider === "resend") clickTracking = "available";
+  }
 
   const metric = experiment.primary_metric as ExperimentPrimaryMetric;
-  const aggregated = aggregateVariantPerformance({
-    variants: variants.map((variant) => ({ id: variant.id, name: variant.name })),
-    assignments: (assignments ?? []).flatMap((row) =>
-      row.campaign_recipient_id
-        ? [{ recipientId: row.campaign_recipient_id, variantId: row.variant_id }]
-        : [],
-    ),
-    recipients: recipients.map((recipient) => ({
-      id: recipient.id,
-      status: recipient.status,
-      replied: Boolean(recipient.replied_at),
-    })),
-    events: (events ?? []).flatMap((event) =>
-      event.campaign_recipient_id
-        ? [{ recipientId: event.campaign_recipient_id, type: event.event_type }]
-        : [],
-    ),
-    primaryMetric: metric,
+  const counts = new Map((metrics ?? []).map((row) => [row.variant_id, row]));
+  const results: VariantPerformance[] = variants.map((variant) => {
+    const count = counts.get(variant.id);
+    const sent = Number(count?.sent ?? 0);
+    const opened = Number(count?.opened ?? 0);
+    const clicked = Number(count?.clicked ?? 0);
+    const replied = Number(count?.replied ?? 0);
+    const rateText = (numerator: number) =>
+      sent > 0 ? `${((numerator / sent) * 100).toFixed(1)}%` : "—";
+    return {
+      variantId: variant.id,
+      name: variant.name,
+      assigned: Number(count?.assigned ?? 0),
+      sent,
+      failed: Number(count?.failed ?? 0),
+      opened,
+      clicked,
+      replied,
+      openRate: rateText(opened),
+      clickRate: clickTracking === "unavailable" ? "Not available" : rateText(clicked),
+      replyRate: rateText(replied),
+    };
   });
+  const comparison = compareVariantPerformance(results, metric, { clickTracking });
 
   return {
     experiment: {
@@ -111,8 +155,9 @@ export async function loadCampaignExperiment(
         enabled: variant.enabled,
         position: variant.position,
       })),
-      results: aggregated.rows,
-      comparison: aggregated.comparison.summary,
+      results,
+      comparison: comparison.summary,
+      clickTracking,
     },
   };
 }
