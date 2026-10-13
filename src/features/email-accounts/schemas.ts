@@ -17,7 +17,7 @@ export const testEmailSchema = z.object({
 
 export type EmailAccountPublic = {
   id: string;
-  provider: "gmail" | "outlook" | "smtp" | "resend";
+  provider: "gmail" | "outlook" | "smtp" | "resend" | "misarmail";
   email: string;
   display_name: string | null;
   status: EmailAccountStatus;

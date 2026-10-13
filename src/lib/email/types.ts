@@ -10,6 +10,16 @@ export type SendEmailInput = {
   tags?: Record<string, string>;
   /** Gmail thread to continue for a follow-up, when available. */
   threadId?: string;
+  /**
+   * Stable provider idempotency key for this recipient row.
+   * Providers that do not support idempotency ignore it.
+   */
+  idempotencyKey?: string;
+  /**
+   * MisarMail sandbox header. Gmail ignores this.
+   * Sandbox stores the payload and does not deliver mail.
+   */
+  sandbox?: boolean;
 };
 
 export type SendEmailErrorCode =

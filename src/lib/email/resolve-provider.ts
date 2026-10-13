@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import { GmailProvider } from "@/lib/email/providers/gmail";
+import { MisarMailProvider } from "@/lib/email/providers/misarmail";
 import { OutlookProvider } from "@/lib/email/providers/outlook-stub";
 import type { EmailProvider } from "@/lib/email/types";
 import { refreshGoogleAccessTokenWithRetry, GoogleTokenRefreshError } from "@/lib/google/oauth";
@@ -42,6 +43,10 @@ export async function resolveEmailProviderForAccount(
 
   if (!account) {
     return { ok: false, error: "Gmail is not connected.", code: "not_found" };
+  }
+
+  if (account.provider === "misarmail") {
+    return resolveMisarMailAccount(supabase, account);
   }
 
   if (account.status === "disconnected") {
@@ -95,6 +100,22 @@ export async function resolveEmailProviderForAccount(
     .maybeSingle();
 
   if (!credentials) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Missing OAuth credentials",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "Your Gmail connection needs to be reauthorized.",
+      code: "auth_required",
+    };
+  }
+
+  if (!credentials.encrypted_refresh_token) {
     await supabase
       .from("email_accounts")
       .update({
@@ -202,6 +223,110 @@ export async function resolveEmailProviderForAccount(
         account.email,
         account.display_name,
       ),
+      accountId: account.id,
+      email: account.email,
+      displayName: account.display_name,
+      accountStatus: account.status,
+    },
+  };
+}
+
+type EmailAccountRow = Database["public"]["Tables"]["email_accounts"]["Row"];
+
+/**
+ * MisarMail uses the same encrypted credential row as Gmail.
+ * The API key is the access-token ciphertext. The refresh-token column is
+ * unused for this provider and is never sent to MisarMail.
+ */
+async function resolveMisarMailAccount(
+  supabase: AppSupabaseClient,
+  account: EmailAccountRow,
+): Promise<
+  | { ok: true; value: ResolvedAccountProvider }
+  | { ok: false; error: string; code: "auth_required" | "rate_limited" }
+> {
+  if (account.status === "disconnected" || account.status === "needs_reauth") {
+    return {
+      ok: false,
+      error: "MisarMail is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  if (
+    account.status === "rate_limited" &&
+    account.rate_limited_until &&
+    new Date(account.rate_limited_until).getTime() > Date.now()
+  ) {
+    return {
+      ok: false,
+      error: "MisarMail sending limit was reached. The campaign has been paused.",
+      code: "rate_limited",
+    };
+  }
+
+  const { data: credentials } = await supabase
+    .from("email_account_credentials")
+    .select("*")
+    .eq("email_account_id", account.id)
+    .maybeSingle();
+
+  if (!credentials?.encrypted_access_token) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Missing MisarMail API key",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "MisarMail is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret(credentials.encrypted_access_token).trim();
+  } catch (error) {
+    console.error("[misarmail] credential decrypt failed", error);
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Stored MisarMail credentials could not be read",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "MisarMail is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  if (!apiKey) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Stored MisarMail API key is empty",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "MisarMail is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      provider: new MisarMailProvider(apiKey, account.email, account.display_name),
       accountId: account.id,
       email: account.email,
       displayName: account.display_name,

@@ -7,7 +7,9 @@ import {
   testEmailSchema,
   type EmailAccountActionState,
 } from "@/features/email-accounts/schemas";
+import { saveMisarMailAccount } from "@/features/email-accounts/misarmail-account";
 import { userFacingEmailError } from "@/lib/email/errors";
+import { misarmailTestSendOptions, testSendSuccessMessage } from "@/lib/email/providers/misarmail";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 import { revokeGoogleToken } from "@/lib/google/oauth";
 import { decryptSecret } from "@/lib/crypto/secrets";
@@ -48,26 +50,37 @@ export async function disconnectEmailAccountAction(
     return { error: "Email account not found." };
   }
 
-  // Best-effort revoke using service role (credentials are not readable via RLS).
-  try {
-    const service = createServiceRoleClient();
-    const { data: credentials } = await service
-      .from("email_account_credentials")
-      .select("encrypted_refresh_token")
-      .eq("email_account_id", account.id)
-      .maybeSingle();
+  if (account.provider === "gmail") {
+    try {
+      const service = createServiceRoleClient();
+      const { data: credentials } = await service
+        .from("email_account_credentials")
+        .select("encrypted_refresh_token")
+        .eq("email_account_id", account.id)
+        .maybeSingle();
 
-    if (credentials?.encrypted_refresh_token) {
-      const refreshToken = decryptSecret(credentials.encrypted_refresh_token);
-      await revokeGoogleToken(refreshToken);
+      if (credentials?.encrypted_refresh_token) {
+        const refreshToken = decryptSecret(credentials.encrypted_refresh_token);
+        await revokeGoogleToken(refreshToken);
+      }
+
+      await service
+        .from("email_account_credentials")
+        .delete()
+        .eq("email_account_id", account.id);
+    } catch (error) {
+      console.error("[email-accounts] disconnect cleanup failed", error);
     }
-
-    await service
-      .from("email_account_credentials")
-      .delete()
-      .eq("email_account_id", account.id);
-  } catch (error) {
-    console.error("[email-accounts] disconnect cleanup failed", error);
+  } else {
+    try {
+      const service = createServiceRoleClient();
+      await service
+        .from("email_account_credentials")
+        .delete()
+        .eq("email_account_id", account.id);
+    } catch (error) {
+      console.error("[email-accounts] disconnect cleanup failed", error);
+    }
   }
 
   const { error } = await supabase
@@ -88,7 +101,12 @@ export async function disconnectEmailAccountAction(
   revalidatePath("/settings");
   revalidatePath("/settings/email-accounts");
   revalidatePath("/campaigns");
-  return { success: "Gmail account disconnected." };
+  return {
+    success:
+      account.provider === "misarmail"
+        ? "MisarMail account disconnected."
+        : "Gmail account disconnected.",
+  };
 }
 
 const updateWarmupSchema = z.object({
@@ -186,13 +204,23 @@ export async function sendAccountTestEmailAction(
     return { error: resolved.error };
   }
 
+  const sandbox = resolved.value.provider.name === "misarmail";
   const result = await resolved.value.provider.send({
     to: parsed.data.to,
-    subject: "Mhenbulk test email",
-    html: `<p>This is a test email sent through your connected Gmail account <strong>${resolved.value.email}</strong> via Mhenbulk.</p>`,
-    text: `This is a test email sent through your connected Gmail account ${resolved.value.email} via Mhenbulk.`,
+    subject: sandbox ? "Mhenbulk sandbox check" : "Mhenbulk test email",
+    html: sandbox
+      ? `<p>Mhenbulk sandbox check for ${resolved.value.email}. This message is not delivered.</p>`
+      : `<p>This is a test email sent through your connected Gmail account <strong>${resolved.value.email}</strong> via Mhenbulk.</p>`,
+    text: sandbox
+      ? `Mhenbulk sandbox check for ${resolved.value.email}. This message is not delivered.`
+      : `This is a test email sent through your connected Gmail account ${resolved.value.email} via Mhenbulk.`,
     from: resolved.value.email,
     fromName: resolved.value.displayName ?? undefined,
+    ...misarmailTestSendOptions(
+      resolved.value.provider.name,
+      resolved.value.accountId,
+      parsed.data.to,
+    ),
   });
 
   if (!result.success) {
@@ -208,5 +236,63 @@ export async function sendAccountTestEmailAction(
     .eq("user_id", user.id);
 
   revalidatePath("/settings/email-accounts");
-  return { success: `Test email sent to ${parsed.data.to}.` };
+  return {
+    success: testSendSuccessMessage(resolved.value.provider.name, parsed.data.to),
+  };
+}
+
+function misarMailFormInput(formData: FormData) {
+  return {
+    email: String(formData.get("email") ?? ""),
+    displayName: String(formData.get("displayName") ?? ""),
+    apiKey: String(formData.get("apiKey") ?? ""),
+    accountId: String(formData.get("accountId") ?? "") || undefined,
+  };
+}
+
+async function storeMisarMailAccount(
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  const { supabase, user } = await requireUser();
+  if (!user) {
+    return { error: "Your session has expired. Please sign in again." };
+  }
+
+  let service;
+  try {
+    service = createServiceRoleClient();
+  } catch {
+    return { error: "Server is missing SUPABASE_SERVICE_ROLE_KEY required to store the MisarMail key." };
+  }
+
+  const saved = await saveMisarMailAccount(
+    supabase,
+    service,
+    user.id,
+    misarMailFormInput(formData),
+  );
+  if (!saved.ok) {
+    return { error: saved.error, fieldErrors: saved.fieldErrors };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/settings/email-accounts");
+  revalidatePath("/campaigns");
+  return { success: "MisarMail account connected." };
+}
+
+export async function connectMisarMailAccountAction(
+  _prev: EmailAccountActionState,
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  return storeMisarMailAccount(formData);
+}
+
+export async function updateMisarMailAccountAction(
+  _prev: EmailAccountActionState,
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  const saved = await storeMisarMailAccount(formData);
+  if (saved.success) return { success: "MisarMail account updated." };
+  return saved;
 }

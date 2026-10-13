@@ -65,7 +65,7 @@ export type EmailEventType =
   | "complained"
   | "retry_scheduled";
 
-export type EmailAccountProvider = "gmail" | "outlook" | "smtp" | "resend";
+export type EmailAccountProvider = "gmail" | "outlook" | "smtp" | "resend" | "misarmail";
 
 export type EmailAccountStatus =
   | "connected"
@@ -280,7 +280,7 @@ export type Database = {
         Row: {
           email_account_id: string;
           encrypted_access_token: string;
-          encrypted_refresh_token: string;
+          encrypted_refresh_token: string | null;
           key_version: number;
           created_at: string;
           updated_at: string;
@@ -288,7 +288,7 @@ export type Database = {
         Insert: {
           email_account_id: string;
           encrypted_access_token: string;
-          encrypted_refresh_token: string;
+          encrypted_refresh_token?: string | null;
           key_version?: number;
           created_at?: string;
           updated_at?: string;
@@ -296,7 +296,7 @@ export type Database = {
         Update: {
           email_account_id?: string;
           encrypted_access_token?: string;
-          encrypted_refresh_token?: string;
+          encrypted_refresh_token?: string | null;
           key_version?: number;
           created_at?: string;
           updated_at?: string;

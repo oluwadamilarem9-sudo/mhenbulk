@@ -40,4 +40,37 @@ describe("GmailProvider timeout behavior", () => {
     expect(result.retryable).toBe(true);
     expect(result.error).toContain("timed out");
   });
+
+  it("does not forward an idempotency key to the Gmail API", async () => {
+    let body = "";
+    let url = "";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      url = String(input);
+      body = String(init?.body ?? "");
+      return new Response(JSON.stringify({ id: "gmail-id", threadId: "thread-1" }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    const provider = new GmailProvider("token", "sender@example.com", "Sender");
+    const result = await provider.send({
+      to: "to@example.com",
+      subject: "Subject",
+      html: "<p>Hello</p>",
+      text: "Hello",
+      idempotencyKey: "mhenbulk:11111111-1111-4111-8111-111111111111",
+      threadId: "thread-1",
+      sandbox: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.messageId).toBe("gmail-id");
+    expect(result.threadId).toBe("thread-1");
+    const request = JSON.parse(body) as Record<string, unknown>;
+    expect(url).toContain("gmail.googleapis.com");
+    expect(request.threadId).toBe("thread-1");
+    expect(request).not.toHaveProperty("idempotency_key");
+    expect(request).not.toHaveProperty("sandbox");
+    expect(Object.keys(request)).not.toContain("Sandbox");
+  });
 });

@@ -11,6 +11,7 @@ import { resolveInitialExperimentMessage } from "@/features/campaigns/experiment
 import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { renderCampaignEmail } from "@/lib/email/render";
+import { misarmailIdempotencyKey } from "@/lib/email/providers/misarmail";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 import { effectiveDailySendLimit } from "@/lib/email/daily-limit";
 import { buildUnsubscribeUrl } from "@/lib/email/unsubscribe";
@@ -886,11 +887,13 @@ export async function processCampaignQueueBatch(
       fromName: resolved.value.displayName ?? undefined,
       headers: {
         // Rendered by mail clients as their own unsubscribe control, so the
-        // message body stays free of footer text.
+        // message body stays free of footer text. Gmail copies these into the
+        // MIME message. MisarMail ignores headers it is not documented to accept.
         "List-Unsubscribe": `<${unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
       threadId: threadId ?? undefined,
+      idempotencyKey: misarmailIdempotencyKey(recipient.id),
     });
     console.info("[QUEUE] Gmail request completed", {
       jobId: recipient.id,

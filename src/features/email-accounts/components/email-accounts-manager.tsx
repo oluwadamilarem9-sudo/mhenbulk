@@ -16,6 +16,10 @@ import {
   getEffectiveDailyLimit,
   getWarmupStageLabel,
 } from "@/features/email-accounts/schemas";
+import {
+  MisarMailConnectForm,
+  MisarMailEditForm,
+} from "@/features/email-accounts/components/misarmail-account-form";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,7 +114,11 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
           ) : null}
         </div>
       ) : (
-        <p className="text-xs text-slate-500">No daily limit set — sending as fast as Gmail allows.</p>
+        <p className="text-xs text-slate-500">
+          {account.provider === "misarmail"
+            ? "No daily limit set."
+            : "No daily limit set — sending as fast as Gmail allows."}
+        </p>
       )}
 
       {/* Settings form */}
@@ -159,7 +167,10 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
         <p className="text-xs font-medium text-amber-800">💡 Deliverability tip</p>
         <p className="mt-1 text-xs text-amber-700">
-          A number in the box is a hard stop for the day. Leave it blank if you want more than the warm-up amount. Gmail can still pause the account on its own quota.
+          A number in the box is a hard stop for the day. Leave it blank if you want more than the warm-up amount.{" "}
+          {account.provider === "misarmail"
+            ? "MisarMail can still pause the account when its plan or rate limit is reached."
+            : "Gmail can still pause the account on its own quota."}
         </p>
       </div>
     </div>
@@ -181,11 +192,16 @@ export function EmailAccountsManager({
     () => accounts.filter((account) => account.provider === "gmail"),
     [accounts],
   );
+  const misarMailAccounts = useMemo(
+    () => accounts.filter((account) => account.provider === "misarmail"),
+    [accounts],
+  );
 
-  function handleDisconnect(accountId: string) {
+  function handleDisconnect(accountId: string, provider: EmailAccountPublic["provider"]) {
+    const label = provider === "misarmail" ? "MisarMail" : "Gmail";
     if (
       !window.confirm(
-        "Disconnect this Gmail account? Campaigns using it will not be able to send until you reconnect or choose another account.",
+        `Disconnect this ${label} account? Campaigns using it will not be able to send until you reconnect or choose another account.`,
       )
     ) {
       return;
@@ -282,7 +298,7 @@ export function EmailAccountsManager({
                       variant="ghost"
                       className="text-rose-600 hover:bg-rose-50"
                       disabled={busy}
-                      onClick={() => handleDisconnect(account.id)}
+                      onClick={() => handleDisconnect(account.id, "gmail")}
                     >
                       Disconnect
                     </Button>
@@ -339,6 +355,76 @@ export function EmailAccountsManager({
               + Connect Gmail
             </Link>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>MisarMail</CardTitle>
+          <CardDescription>
+            Connect a MisarMail API key and a sender address MisarMail has authorized.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {misarMailAccounts.map((account) => (
+            <div
+              key={account.id}
+              className="rounded-xl border border-slate-200 bg-white p-5"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">MisarMail</p>
+                  <p className="mt-1 text-base font-semibold text-slate-900">
+                    {account.display_name || "MisarMail account"}
+                  </p>
+                  <p className="text-sm text-slate-600">{account.email}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {statusBadge(account.status)}
+                    {account.last_error ? (
+                      <span className="text-xs text-rose-600">{account.last_error}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  className="text-rose-600 hover:bg-rose-50"
+                  disabled={busy}
+                  onClick={() => handleDisconnect(account.id, "misarmail")}
+                >
+                  Disconnect
+                </Button>
+              </div>
+              <MisarMailEditForm account={account} />
+              <WarmupPanel account={account} />
+              {account.status === "connected" || account.status === "rate_limited" ? (
+                <form
+                  action={testAction}
+                  className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+                >
+                  <input type="hidden" name="emailAccountId" value={account.id} />
+                  <div className="space-y-2">
+                    <Label htmlFor={`misar-test-to-${account.id}`}>
+                      Sandbox test
+                    </Label>
+                    <Input
+                      id={`misar-test-to-${account.id}`}
+                      name="to"
+                      type="email"
+                      placeholder="you@example.com"
+                      required
+                    />
+                    <p className="text-xs text-slate-500">
+                      MisarMail stores this check and does not deliver an email.
+                    </p>
+                  </div>
+                  <Button type="submit" disabled={testPending || busy}>
+                    {testPending ? "Checking..." : "Run sandbox test"}
+                  </Button>
+                </form>
+              ) : null}
+            </div>
+          ))}
+          <MisarMailConnectForm />
         </CardContent>
       </Card>
     </div>

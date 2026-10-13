@@ -11,8 +11,10 @@ import {
   subjectForStorage,
   type CampaignActionState,
 } from "@/features/campaigns/schemas";
+import { campaignSenderBlock } from "@/features/email-accounts/sender-eligibility";
 import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
+import { misarmailTestSendOptions, testSendSuccessMessage } from "@/lib/email/providers/misarmail";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
@@ -144,15 +146,8 @@ export async function createCampaignAction(
     parsed.data.emailAccountId,
   );
 
-  if (!sender || sender.provider !== "gmail") {
-    return { error: "Gmail is not connected." };
-  }
-
-  if (sender.status === "needs_reauth" || sender.status === "disconnected") {
-    return {
-      error: "Your Gmail connection needs to be reauthorized.",
-    };
-  }
+  const blocked = campaignSenderBlock(sender);
+  if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
 
   const { data, error } = await supabase
     .from("campaigns")
@@ -288,15 +283,8 @@ export async function updateCampaignAction(
     parsed.data.emailAccountId,
   );
 
-  if (!sender || sender.provider !== "gmail") {
-    return { error: "Gmail is not connected." };
-  }
-
-  if (sender.status === "needs_reauth" || sender.status === "disconnected") {
-    return {
-      error: "Your Gmail connection needs to be reauthorized.",
-    };
-  }
+  const blocked = campaignSenderBlock(sender);
+  if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
 
   const { data: updated, error } = await supabase
     .from("campaigns")
@@ -519,6 +507,11 @@ export async function sendTestEmailAction(
     text: rendered.text,
     from: resolved.value.email,
     fromName: resolved.value.displayName ?? undefined,
+    ...misarmailTestSendOptions(
+      resolved.value.provider.name,
+      campaign.id,
+      parsed.data.to,
+    ),
   });
 
   if (!result.success) {
@@ -542,7 +535,11 @@ export async function sendTestEmailAction(
   );
 
   return {
-    success: `Test email sent to ${parsed.data.to} from ${resolved.value.email}.`,
+    success: testSendSuccessMessage(
+      resolved.value.provider.name,
+      parsed.data.to,
+      resolved.value.email,
+    ),
   };
 }
 
@@ -595,21 +592,15 @@ export async function startCampaignAction(
     campaign.email_account_id,
   );
 
-  if (!sender || sender.provider !== "gmail") {
-    return { error: "Gmail is not connected." };
-  }
+  const blocked = campaignSenderBlock(sender);
+  if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
 
-  if (sender.status === "needs_reauth" || sender.status === "disconnected") {
+  if (sender.status === "rate_limited") {
     return {
-      error: "Your Gmail connection needs to be reauthorized.",
-    };
-  }
-
-  if (
-    sender.status === "rate_limited"
-  ) {
-    return {
-      error: "Gmail sending quota was reached. Please try again later.",
+      error:
+        sender.provider === "misarmail"
+          ? "MisarMail sending limit was reached. Please try again later."
+          : "Gmail sending quota was reached. Please try again later.",
     };
   }
 
@@ -842,13 +833,19 @@ async function setCampaignPaused(
 
     if (!sender || sender.status === "needs_reauth" || sender.status === "disconnected") {
       return {
-        error: "Your Gmail connection needs to be reauthorized.",
+        error:
+          sender?.provider === "misarmail"
+            ? "MisarMail is not connected."
+            : "Your Gmail connection needs to be reauthorized.",
       };
     }
 
     if (sender.status === "rate_limited") {
       return {
-        error: "Gmail sending quota was reached. The campaign cannot resume yet.",
+        error:
+          sender.provider === "misarmail"
+            ? "MisarMail sending limit was reached. The campaign cannot resume yet."
+            : "Gmail sending quota was reached. The campaign cannot resume yet.",
       };
     }
   }
