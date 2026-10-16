@@ -11,6 +11,7 @@ export type {
   SendEmailResult,
 } from "@/lib/email/types";
 
+import { ResendProvider } from "@/lib/email/providers/resend";
 import type { EmailProvider, SendEmailInput, SendEmailResult } from "@/lib/email/types";
 
 export class ConsoleEmailProvider implements EmailProvider {
@@ -32,66 +33,23 @@ export class ConsoleEmailProvider implements EmailProvider {
   }
 }
 
+/** Legacy env-based Resend adapter. Prefer account-based ResendProvider. */
 export class ResendEmailProvider implements EmailProvider {
   readonly name = "resend";
+  private readonly inner: ResendProvider;
 
   constructor(
-    private readonly apiKey: string,
+    apiKey: string,
     private readonly defaultFrom: string,
-  ) {}
+  ) {
+    this.inner = new ResendProvider(apiKey, defaultFrom);
+  }
 
-  async send(input: SendEmailInput): Promise<SendEmailResult> {
-    try {
-      const from =
-        input.fromName && input.from
-          ? `${input.fromName} <${input.from}>`
-          : input.from || this.defaultFrom;
-
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from,
-          to: [input.to],
-          subject: input.subject,
-          html: input.html,
-          text: input.text,
-          headers: input.headers,
-          reply_to: input.replyTo,
-        }),
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        return {
-          success: false,
-          provider: this.name,
-          retryable: response.status === 429 || response.status >= 500,
-          errorCode:
-            response.status === 429 ? "rate_limited" : "provider_error",
-          error: `Resend ${response.status}: ${body.slice(0, 300)}`,
-        };
-      }
-
-      const data = (await response.json()) as { id?: string };
-
-      return {
-        success: true,
-        provider: this.name,
-        messageId: data.id,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        provider: this.name,
-        retryable: true,
-        errorCode: "network_error",
-        error: error instanceof Error ? error.message : "Network error",
-      };
-    }
+  send(input: SendEmailInput): Promise<SendEmailResult> {
+    return this.inner.send({
+      ...input,
+      from: input.from || this.defaultFrom,
+    });
   }
 }
 

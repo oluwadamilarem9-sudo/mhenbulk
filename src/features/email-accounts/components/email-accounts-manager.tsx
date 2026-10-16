@@ -20,6 +20,10 @@ import {
   MisarMailConnectForm,
   MisarMailEditForm,
 } from "@/features/email-accounts/components/misarmail-account-form";
+import {
+  ResendConnectForm,
+  ResendEditForm,
+} from "@/features/email-accounts/components/resend-account-form";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -115,9 +119,9 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
         </div>
       ) : (
         <p className="text-xs text-slate-500">
-          {account.provider === "misarmail"
-            ? "No daily limit set."
-            : "No daily limit set — sending as fast as Gmail allows."}
+          {account.provider === "gmail"
+            ? "No daily limit set — sending as fast as Gmail allows."
+            : "No daily limit set."}
         </p>
       )}
 
@@ -168,9 +172,9 @@ function WarmupPanel({ account }: { account: EmailAccountPublic }) {
         <p className="text-xs font-medium text-amber-800">💡 Deliverability tip</p>
         <p className="mt-1 text-xs text-amber-700">
           A number in the box is a hard stop for the day. Leave it blank if you want more than the warm-up amount.{" "}
-          {account.provider === "misarmail"
-            ? "MisarMail can still pause the account when its plan or rate limit is reached."
-            : "Gmail can still pause the account on its own quota."}
+          {account.provider === "gmail"
+            ? "Gmail can still pause the account on its own quota."
+            : "The provider can still pause the account when its plan or rate limit is reached."}
         </p>
       </div>
     </div>
@@ -196,9 +200,18 @@ export function EmailAccountsManager({
     () => accounts.filter((account) => account.provider === "misarmail"),
     [accounts],
   );
+  const resendAccounts = useMemo(
+    () => accounts.filter((account) => account.provider === "resend"),
+    [accounts],
+  );
 
   function handleDisconnect(accountId: string, provider: EmailAccountPublic["provider"]) {
-    const label = provider === "misarmail" ? "MisarMail" : "Gmail";
+    const label =
+      provider === "misarmail"
+        ? "MisarMail"
+        : provider === "resend"
+          ? "Resend"
+          : "Gmail";
     if (
       !window.confirm(
         `Disconnect this ${label} account? Campaigns using it will not be able to send until you reconnect or choose another account.`,
@@ -425,6 +438,80 @@ export function EmailAccountsManager({
             </div>
           ))}
           <MisarMailConnectForm />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Resend</CardTitle>
+          <CardDescription>
+            Connect a Resend API key and a sender address on a domain you verified
+            in Resend.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {resendAccounts.map((account) => (
+            <div
+              key={account.id}
+              className="rounded-xl border border-slate-200 bg-white p-5"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Resend</p>
+                  <p className="mt-1 text-base font-semibold text-slate-900">
+                    {account.display_name || "Resend account"}
+                  </p>
+                  <p className="text-sm text-slate-600">{account.email}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {statusBadge(account.status)}
+                    {account.last_error ? (
+                      <span className="text-xs text-rose-600">
+                        {account.last_error}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  className="text-rose-600 hover:bg-rose-50"
+                  disabled={busy}
+                  onClick={() => handleDisconnect(account.id, "resend")}
+                >
+                  Disconnect
+                </Button>
+              </div>
+              <ResendEditForm account={account} />
+              <WarmupPanel account={account} />
+              {account.status === "connected" ||
+              account.status === "rate_limited" ? (
+                <form
+                  action={testAction}
+                  className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+                >
+                  <input type="hidden" name="emailAccountId" value={account.id} />
+                  <div className="space-y-2">
+                    <Label htmlFor={`resend-test-to-${account.id}`}>
+                      Send test email
+                    </Label>
+                    <Input
+                      id={`resend-test-to-${account.id}`}
+                      name="to"
+                      type="email"
+                      placeholder="you@example.com"
+                      required
+                    />
+                    <p className="text-xs text-slate-500">
+                      This sends a real email through Resend to the address you enter.
+                    </p>
+                  </div>
+                  <Button type="submit" disabled={testPending || busy}>
+                    {testPending ? "Sending..." : "Send Test Email"}
+                  </Button>
+                </form>
+              ) : null}
+            </div>
+          ))}
+          <ResendConnectForm />
         </CardContent>
       </Card>
     </div>

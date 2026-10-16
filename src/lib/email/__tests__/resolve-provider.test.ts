@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { GmailProvider } from "@/lib/email/providers/gmail";
 import { MisarMailProvider } from "@/lib/email/providers/misarmail";
+import { ResendProvider } from "@/lib/email/providers/resend";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 
 const API_KEY = "msk_unit_test_key";
@@ -204,6 +205,32 @@ describe("resolveEmailProviderForAccount", () => {
     expect(blank).toMatchObject({ ok: false, code: "auth_required" });
     expect(updates[0]?.payload).toMatchObject({ status: "needs_reauth" });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("resolves a Resend account from the encrypted API key", async () => {
+    const client = supabaseFor({
+      email_accounts: account({
+        provider: "resend",
+        provider_account_id: "hello@mhenbulk.store",
+        email: "hello@mhenbulk.store",
+        display_name: "Mhenbulk",
+      }),
+      email_account_credentials: {
+        encrypted_access_token: encryptSecret("re_unit_test_key"),
+        encrypted_refresh_token: null,
+      },
+    });
+
+    const resolved = await resolveEmailProviderForAccount(
+      client as never,
+      "user-1",
+      "account-1",
+    );
+
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.provider).toBeInstanceOf(ResendProvider);
+    expect(resolved.value.email).toBe("hello@mhenbulk.store");
   });
 
   it("does not treat a MisarMail account as Gmail when the refresh token is empty", async () => {

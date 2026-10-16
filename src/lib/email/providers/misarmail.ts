@@ -43,6 +43,11 @@ export function testSendSuccessMessage(providerName: string, to: string, from?: 
   if (providerName === "misarmail") {
     return `MisarMail accepted the sandbox test for ${to}. No email was delivered.`;
   }
+  if (providerName === "resend") {
+    return from
+      ? `Test email sent to ${to} from ${from} via Resend.`
+      : `Test email sent to ${to} via Resend.`;
+  }
   if (from) return `Test email sent to ${to} from ${from}.`;
   return `Test email sent to ${to}.`;
 }

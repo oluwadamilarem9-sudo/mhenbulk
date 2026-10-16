@@ -8,6 +8,7 @@ import {
   type EmailAccountActionState,
 } from "@/features/email-accounts/schemas";
 import { saveMisarMailAccount } from "@/features/email-accounts/misarmail-account";
+import { saveResendAccount } from "@/features/email-accounts/resend-account";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { misarmailTestSendOptions, testSendSuccessMessage } from "@/lib/email/providers/misarmail";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
@@ -105,7 +106,9 @@ export async function disconnectEmailAccountAction(
     success:
       account.provider === "misarmail"
         ? "MisarMail account disconnected."
-        : "Gmail account disconnected.",
+        : account.provider === "resend"
+          ? "Resend account disconnected."
+          : "Gmail account disconnected.",
   };
 }
 
@@ -204,20 +207,21 @@ export async function sendAccountTestEmailAction(
     return { error: resolved.error };
   }
 
-  const sandbox = resolved.value.provider.name === "misarmail";
+  const providerName = resolved.value.provider.name;
+  const sandbox = providerName === "misarmail";
   const result = await resolved.value.provider.send({
     to: parsed.data.to,
     subject: sandbox ? "Mhenbulk sandbox check" : "Mhenbulk test email",
     html: sandbox
       ? `<p>Mhenbulk sandbox check for ${resolved.value.email}. This message is not delivered.</p>`
-      : `<p>This is a test email sent through your connected Gmail account <strong>${resolved.value.email}</strong> via Mhenbulk.</p>`,
+      : `<p>This is a test email sent through your connected ${providerName === "resend" ? "Resend" : "Gmail"} account <strong>${resolved.value.email}</strong> via Mhenbulk.</p>`,
     text: sandbox
       ? `Mhenbulk sandbox check for ${resolved.value.email}. This message is not delivered.`
-      : `This is a test email sent through your connected Gmail account ${resolved.value.email} via Mhenbulk.`,
+      : `This is a test email sent through your connected ${providerName === "resend" ? "Resend" : "Gmail"} account ${resolved.value.email} via Mhenbulk.`,
     from: resolved.value.email,
     fromName: resolved.value.displayName ?? undefined,
     ...misarmailTestSendOptions(
-      resolved.value.provider.name,
+      providerName,
       resolved.value.accountId,
       parsed.data.to,
     ),
@@ -294,5 +298,64 @@ export async function updateMisarMailAccountAction(
 ): Promise<EmailAccountActionState> {
   const saved = await storeMisarMailAccount(formData);
   if (saved.success) return { success: "MisarMail account updated." };
+  return saved;
+}
+
+function resendFormInput(formData: FormData) {
+  return {
+    email: String(formData.get("email") ?? ""),
+    displayName: String(formData.get("displayName") ?? ""),
+    apiKey: String(formData.get("apiKey") ?? ""),
+    accountId: String(formData.get("accountId") ?? "") || undefined,
+  };
+}
+
+async function storeResendAccount(
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  const { supabase, user } = await requireUser();
+  if (!user) {
+    return { error: "Your session has expired. Please sign in again." };
+  }
+
+  let service;
+  try {
+    service = createServiceRoleClient();
+  } catch {
+    return {
+      error:
+        "Server is missing SUPABASE_SERVICE_ROLE_KEY required to store the Resend key.",
+    };
+  }
+
+  const saved = await saveResendAccount(
+    supabase,
+    service,
+    user.id,
+    resendFormInput(formData),
+  );
+  if (!saved.ok) {
+    return { error: saved.error, fieldErrors: saved.fieldErrors };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/settings/email-accounts");
+  revalidatePath("/campaigns");
+  return { success: "Resend account connected." };
+}
+
+export async function connectResendAccountAction(
+  _prev: EmailAccountActionState,
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  return storeResendAccount(formData);
+}
+
+export async function updateResendAccountAction(
+  _prev: EmailAccountActionState,
+  formData: FormData,
+): Promise<EmailAccountActionState> {
+  const saved = await storeResendAccount(formData);
+  if (saved.success) return { success: "Resend account updated." };
   return saved;
 }

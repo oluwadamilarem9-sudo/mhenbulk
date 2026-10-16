@@ -600,7 +600,9 @@ export async function startCampaignAction(
       error:
         sender.provider === "misarmail"
           ? "MisarMail sending limit was reached. Please try again later."
-          : "Gmail sending quota was reached. Please try again later.",
+          : sender.provider === "resend"
+            ? "Resend sending limit was reached. Please try again later."
+            : "Gmail sending quota was reached. Please try again later.",
     };
   }
 
@@ -836,7 +838,9 @@ async function setCampaignPaused(
         error:
           sender?.provider === "misarmail"
             ? "MisarMail is not connected."
-            : "Your Gmail connection needs to be reauthorized.",
+            : sender?.provider === "resend"
+              ? "Resend is not connected."
+              : "Your Gmail connection needs to be reauthorized.",
       };
     }
 
@@ -845,7 +849,9 @@ async function setCampaignPaused(
         error:
           sender.provider === "misarmail"
             ? "MisarMail sending limit was reached. The campaign cannot resume yet."
-            : "Gmail sending quota was reached. The campaign cannot resume yet.",
+            : sender.provider === "resend"
+              ? "Resend sending limit was reached. The campaign cannot resume yet."
+              : "Gmail sending quota was reached. The campaign cannot resume yet.",
       };
     }
   }

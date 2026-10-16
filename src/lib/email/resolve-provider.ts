@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import { GmailProvider } from "@/lib/email/providers/gmail";
 import { MisarMailProvider } from "@/lib/email/providers/misarmail";
+import { ResendProvider } from "@/lib/email/providers/resend";
 import { OutlookProvider } from "@/lib/email/providers/outlook-stub";
 import type { EmailProvider } from "@/lib/email/types";
 import { refreshGoogleAccessTokenWithRetry, GoogleTokenRefreshError } from "@/lib/google/oauth";
@@ -47,6 +48,10 @@ export async function resolveEmailProviderForAccount(
 
   if (account.provider === "misarmail") {
     return resolveMisarMailAccount(supabase, account);
+  }
+
+  if (account.provider === "resend") {
+    return resolveResendAccount(supabase, account);
   }
 
   if (account.status === "disconnected") {
@@ -327,6 +332,107 @@ async function resolveMisarMailAccount(
     ok: true,
     value: {
       provider: new MisarMailProvider(apiKey, account.email, account.display_name),
+      accountId: account.id,
+      email: account.email,
+      displayName: account.display_name,
+      accountStatus: account.status,
+    },
+  };
+}
+
+/**
+ * Resend uses the same encrypted credential row as MisarMail.
+ * The API key is the access-token ciphertext. The refresh-token column is unused.
+ */
+async function resolveResendAccount(
+  supabase: AppSupabaseClient,
+  account: EmailAccountRow,
+): Promise<
+  | { ok: true; value: ResolvedAccountProvider }
+  | { ok: false; error: string; code: "auth_required" | "rate_limited" }
+> {
+  if (account.status === "disconnected" || account.status === "needs_reauth") {
+    return {
+      ok: false,
+      error: "Resend is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  if (
+    account.status === "rate_limited" &&
+    account.rate_limited_until &&
+    new Date(account.rate_limited_until).getTime() > Date.now()
+  ) {
+    return {
+      ok: false,
+      error: "Resend sending limit was reached. The campaign has been paused.",
+      code: "rate_limited",
+    };
+  }
+
+  const { data: credentials } = await supabase
+    .from("email_account_credentials")
+    .select("*")
+    .eq("email_account_id", account.id)
+    .maybeSingle();
+
+  if (!credentials?.encrypted_access_token) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Missing Resend API key",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "Resend is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret(credentials.encrypted_access_token).trim();
+  } catch (error) {
+    console.error("[resend] credential decrypt failed", error);
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Stored Resend credentials could not be read",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "Resend is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  if (!apiKey) {
+    await supabase
+      .from("email_accounts")
+      .update({
+        status: "needs_reauth",
+        last_error: "Stored Resend API key is empty",
+      })
+      .eq("id", account.id);
+
+    return {
+      ok: false,
+      error: "Resend is not connected.",
+      code: "auth_required",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      provider: new ResendProvider(apiKey, account.email, account.display_name),
       accountId: account.id,
       email: account.email,
       displayName: account.display_name,

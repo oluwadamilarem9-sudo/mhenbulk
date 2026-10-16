@@ -31,7 +31,8 @@ export function SenderAccountSelect({
       <Label htmlFor={name}>Sending account</Label>
       {selectable.length === 0 ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Connect Gmail or MisarMail in Settings before you can send campaigns.{" "}
+          Connect Gmail, Resend, or MisarMail in Settings before you can send
+          campaigns.{" "}
           <a href="/settings/email-accounts" className="font-medium underline">
             Connect Gmail
           </a>

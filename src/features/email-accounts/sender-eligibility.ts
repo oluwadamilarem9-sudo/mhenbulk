@@ -1,13 +1,14 @@
 import type { EmailAccountPublic } from "@/features/email-accounts/schemas";
 
 const SELECTABLE_STATUS = new Set(["connected", "rate_limited"]);
+const CAMPAIGN_PROVIDERS = new Set(["gmail", "misarmail", "resend"]);
 
 export function selectableSenderAccounts(
   accounts: EmailAccountPublic[],
 ): EmailAccountPublic[] {
   return accounts.filter(
     (account) =>
-      (account.provider === "gmail" || account.provider === "misarmail") &&
+      CAMPAIGN_PROVIDERS.has(account.provider) &&
       SELECTABLE_STATUS.has(account.status),
   );
 }
@@ -31,7 +32,12 @@ export function senderOptionLabel(account: EmailAccountPublic): string {
   const identity = account.display_name
     ? `${account.display_name} <${account.email}>`
     : account.email;
-  const provider = account.provider === "misarmail" ? "MisarMail" : "Gmail";
+  const provider =
+    account.provider === "misarmail"
+      ? "MisarMail"
+      : account.provider === "resend"
+        ? "Resend"
+        : "Gmail";
   return `${provider} · ${identity}`;
 }
 
@@ -42,13 +48,13 @@ export function senderOptionLabel(account: EmailAccountPublic): string {
 export function campaignSenderBlock(
   sender: { provider: string; status: string } | null,
 ): string | null {
-  if (!sender || (sender.provider !== "gmail" && sender.provider !== "misarmail")) {
+  if (!sender || !CAMPAIGN_PROVIDERS.has(sender.provider)) {
     return "Gmail is not connected.";
   }
   if (sender.status === "needs_reauth" || sender.status === "disconnected") {
-    return sender.provider === "misarmail"
-      ? "MisarMail is not connected."
-      : "Your Gmail connection needs to be reauthorized.";
+    if (sender.provider === "misarmail") return "MisarMail is not connected.";
+    if (sender.provider === "resend") return "Resend is not connected.";
+    return "Your Gmail connection needs to be reauthorized.";
   }
   return null;
 }
