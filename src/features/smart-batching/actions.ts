@@ -178,6 +178,40 @@ export async function renameContactBatchAction(
   return { success: "Batch renamed." };
 }
 
+async function clearBatchRecipientLinks(
+  trusted: ReturnType<typeof createServiceRoleClient>,
+  userId: string,
+  batchIds: string[],
+) {
+  // Detach recipients/activity before deleting contact_batches so cascade
+  // SET NULL cannot trip the smart-batch ownership trigger mid-delete.
+  const { data: campaignBatchRows } = await trusted
+    .from("campaign_batches")
+    .select("id")
+    .eq("user_id", userId)
+    .in("batch_id", batchIds);
+  const campaignBatchIds = (campaignBatchRows ?? []).map((row) => row.id);
+
+  if (campaignBatchIds.length > 0) {
+    await trusted
+      .from("campaign_activity")
+      .update({ campaign_batch_id: null })
+      .eq("user_id", userId)
+      .in("campaign_batch_id", campaignBatchIds);
+    await trusted
+      .from("campaign_recipients")
+      .update({ campaign_batch_id: null, batch_id: null })
+      .eq("user_id", userId)
+      .in("campaign_batch_id", campaignBatchIds);
+  }
+
+  await trusted
+    .from("campaign_recipients")
+    .update({ batch_id: null, campaign_batch_id: null })
+    .eq("user_id", userId)
+    .in("batch_id", batchIds);
+}
+
 export async function deleteContactBatchAction(
   batchId: string,
 ): Promise<SmartBatchActionState> {
@@ -196,14 +230,29 @@ export async function deleteContactBatchAction(
     return { error: "Pause or cancel active campaign sends before deleting this batch." };
   }
 
-  const { data, error } = await supabase
+  let trusted: ReturnType<typeof createServiceRoleClient>;
+  try {
+    trusted = createServiceRoleClient();
+  } catch {
+    trusted = supabase as unknown as ReturnType<typeof createServiceRoleClient>;
+  }
+
+  await clearBatchRecipientLinks(trusted, user.id, [parsed.data]);
+
+  const { data, error } = await trusted
     .from("contact_batches")
     .delete()
     .eq("id", parsed.data)
     .eq("user_id", user.id)
     .select("id")
     .maybeSingle();
-  if (error || !data) return { error: "Unable to delete this batch." };
+  if (error || !data) {
+    return {
+      error: error
+        ? `Unable to delete this batch. (${error.message})`
+        : "Unable to delete this batch.",
+    };
+  }
   revalidatePath("/contacts");
   revalidatePath("/dashboard");
   return { success: "Batch deleted. Its contacts remain in Contacts." };
@@ -260,6 +309,8 @@ export async function deleteContactBatchesAction(
   let deleted = 0;
   for (let i = 0; i < ownedIds.length; i += CHUNK) {
     const chunk = ownedIds.slice(i, i + CHUNK);
+    await clearBatchRecipientLinks(trusted, user.id, chunk);
+
     const { data, error } = await trusted
       .from("contact_batches")
       .delete()

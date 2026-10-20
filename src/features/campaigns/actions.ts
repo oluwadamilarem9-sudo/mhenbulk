@@ -360,14 +360,28 @@ export async function deleteCampaignAction(
     };
   }
 
-  const { error } = await supabase
+  let trusted: ReturnType<typeof createServiceRoleClient>;
+  try {
+    trusted = createServiceRoleClient();
+  } catch {
+    trusted = supabase as unknown as ReturnType<typeof createServiceRoleClient>;
+  }
+
+  // Allow cascade-delete of A/B variants that were locked after the test started.
+  await trusted
+    .from("campaign_experiments")
+    .update({ status: "draft" })
+    .eq("user_id", user.id)
+    .eq("campaign_id", idResult.data);
+
+  const { error } = await trusted
     .from("campaigns")
     .delete()
     .eq("id", idResult.data)
     .eq("user_id", user.id);
 
   if (error) {
-    return { error: "Unable to delete the campaign." };
+    return { error: `Unable to delete the campaign. (${error.message})` };
   }
 
   revalidatePath("/campaigns");
@@ -413,6 +427,14 @@ export async function deleteCampaignsAction(
   let deleted = 0;
   for (let i = 0; i < ownedIds.length; i += CHUNK) {
     const chunk = ownedIds.slice(i, i + CHUNK);
+    // Unlock A/B variants so campaign cascade delete is not blocked by the
+    // post-start experiment lock (permanent DB fix is migration 0021).
+    await trusted
+      .from("campaign_experiments")
+      .update({ status: "draft" })
+      .eq("user_id", user.id)
+      .in("campaign_id", chunk);
+
     const { data, error } = await trusted
       .from("campaigns")
       .delete()

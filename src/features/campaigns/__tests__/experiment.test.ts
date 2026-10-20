@@ -363,6 +363,23 @@ describe("campaign A/B experiments", () => {
       expect(sql.toLowerCase()).not.toContain("drop table");
     }
   });
+
+  it("keeps variant edits locked after start but allows cascade deletes", () => {
+    const sql = readFileSync(
+      "supabase/migrations/0021_fix_campaign_and_batch_deletes.sql",
+      "utf8",
+    );
+    expect(sql).toContain("if tg_op = 'DELETE' then");
+    expect(sql).toContain(
+      "before insert or update on public.campaign_experiment_variants",
+    );
+    expect(sql).not.toContain(
+      "before insert or update or delete on public.campaign_experiment_variants",
+    );
+    expect(sql).toContain("on delete cascade");
+    expect(sql).toContain("enforce_smart_batch_ownership");
+    expect(sql).toContain("if found then");
+  });
 });
 
 function row(name: string, sent: number, opened: number): VariantPerformance {
