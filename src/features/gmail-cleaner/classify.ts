@@ -401,6 +401,7 @@ export function classifyGmailMessage(
 }
 
 export function isCleanupCandidate(result: ClassificationResult): boolean {
+  // Spam/Trash/Draft/Sent are classified as keep/protected before trash suggestions.
   return (
     result.protectionStatus !== "protected" &&
     result.suggestedAction === "trash"

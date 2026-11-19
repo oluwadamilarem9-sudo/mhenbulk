@@ -11,6 +11,11 @@ import {
 import { resolveGmailMailboxAccess } from "@/features/gmail-cleaner/gmail-access";
 import { sanitizeEmailPreview } from "@/features/gmail-cleaner/sanitize-preview";
 import {
+  hasHardBlockedGmailLabel,
+  isDefaultCleanupCandidateFromClassification,
+  isManuallySelectable,
+} from "@/features/gmail-cleaner/selection";
+import {
   GmailApiError,
   getGmailMessageMetadata,
   getGmailMessageMetadataBatch,
@@ -26,19 +31,6 @@ const SCAN_PAGE_SIZE = 40;
 const METADATA_CONCURRENCY = 4;
 const TRASH_CONCURRENCY = 3;
 const STALE_SCAN_MS = 30 * 60 * 1000;
-
-const PROTECTED_LABELS = new Set([
-  "DRAFT",
-  "SENT",
-  "SPAM",
-  "TRASH",
-  "STARRED",
-  "IMPORTANT",
-]);
-
-function hasProtectedGmailLabel(labelIds: string[] | null | undefined): boolean {
-  return (labelIds ?? []).some((label) => PROTECTED_LABELS.has(label));
-}
 
 export type GmailCleanerActionState = {
   error?: string;
@@ -277,10 +269,22 @@ export async function processGmailScanChunkAction(
       const isDraft = labels.includes("DRAFT");
       const isSent = labels.includes("SENT");
 
+      const defaultSelected = isDefaultCleanupCandidateFromClassification(
+        classified,
+        { isSpam, isTrash, isDraft, isSent, labelIds: labels },
+      );
+
       categoryCounts[classified.primaryCategory] += 1;
       if (classified.protectionStatus === "protected") protectedDelta += 1;
-      if (classified.suggestedAction === "trash") clutterDelta += 1;
-      if (classified.primaryCategory === "needs_review") needsReviewDelta += 1;
+      // Potential clutter = default cleanup candidates only (never review/keep).
+      if (defaultSelected) clutterDelta += 1;
+      // Needs review = uncertain suggestions, not merely the needs_review category label.
+      if (
+        classified.suggestedAction === "review" &&
+        classified.protectionStatus !== "protected"
+      ) {
+        needsReviewDelta += 1;
+      }
       if (isSpam) spamDelta += 1;
       if (isTrash) trashDelta += 1;
       if (isDraft) draftDelta += 1;
@@ -317,7 +321,7 @@ export async function processGmailScanChunkAction(
         confidence: classified.confidence,
         protection_status: classified.protectionStatus,
         suggested_action: classified.suggestedAction,
-        selected: classified.suggestedAction === "trash",
+        selected: defaultSelected,
         is_spam: isSpam,
         is_trash: isTrash,
         is_draft: isDraft,
@@ -402,6 +406,28 @@ export async function processGmailScanChunkAction(
         protectedCount: latest?.protected_count ?? scan.protected_count,
         needsReviewCount: latest?.needs_review_count ?? scan.needs_review_count,
       };
+    }
+
+    if (done) {
+      // Final pass: selection flags match default cleanup candidates only.
+      await supabase
+        .from("gmail_cleaner_messages")
+        .update({ selected: false })
+        .eq("user_id", user.id)
+        .eq("scan_id", scan.id)
+        .eq("selected", true)
+        .neq("suggested_action", "trash");
+      await supabase
+        .from("gmail_cleaner_messages")
+        .update({ selected: true })
+        .eq("user_id", user.id)
+        .eq("scan_id", scan.id)
+        .eq("suggested_action", "trash")
+        .eq("protection_status", "none")
+        .eq("is_draft", false)
+        .eq("is_sent", false)
+        .eq("is_spam", false)
+        .eq("is_trash", false);
     }
 
     revalidatePath("/gmail-cleaner");
@@ -492,7 +518,8 @@ export async function setGmailCleanerSelectionAction(
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
 
-  const { error } = await supabase
+  // Manual toggles may include needs-review, but never blocked messages.
+  let query = supabase
     .from("gmail_cleaner_messages")
     .update({ selected: parsed.data.selected })
     .eq("user_id", user.id)
@@ -503,6 +530,13 @@ export async function setGmailCleanerSelectionAction(
     .eq("is_sent", false)
     .eq("is_spam", false)
     .eq("is_trash", false);
+
+  if (parsed.data.selected) {
+    // Selecting requires a cleanup-or-review suggestion; keep stays unselected.
+    query = query.in("suggested_action", ["trash", "review"]);
+  }
+
+  const { error } = await query;
 
   if (error) return { error: "Unable to update selection." };
   revalidatePath("/gmail-cleaner");
@@ -540,7 +574,10 @@ export async function selectCategoryForCleanupAction(
   const { supabase, user } = await requireUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
 
-  const { error } = await supabase
+  // Select: only default cleanup candidates (suggested trash).
+  // Clear: any previously selected non-blocked rows in that category (including
+  // needs-review left selected by older bulk-select behaviour).
+  let query = supabase
     .from("gmail_cleaner_messages")
     .update({ selected: parsed.data.selected })
     .eq("user_id", user.id)
@@ -550,8 +587,15 @@ export async function selectCategoryForCleanupAction(
     .eq("is_draft", false)
     .eq("is_sent", false)
     .eq("is_spam", false)
-    .eq("is_trash", false)
-    .in("suggested_action", ["trash", "review"]);
+    .eq("is_trash", false);
+
+  if (parsed.data.selected) {
+    query = query.eq("suggested_action", "trash");
+  } else {
+    query = query.in("suggested_action", ["trash", "review"]);
+  }
+
+  const { error } = await query;
 
   if (error) return { error: "Unable to update category selection." };
   revalidatePath("/gmail-cleaner");
@@ -630,6 +674,17 @@ export async function trashSelectedGmailMessagesAction(
   const accessToken = access.accessToken;
   const accountId = scan.email_account_id;
 
+  // Drop blocked rows that were incorrectly left selected (stale UI / old bugs).
+  await supabase
+    .from("gmail_cleaner_messages")
+    .update({ selected: false })
+    .eq("user_id", user.id)
+    .eq("scan_id", scan.id)
+    .eq("selected", true)
+    .or(
+      "protection_status.eq.protected,is_draft.eq.true,is_sent.eq.true,is_spam.eq.true,is_trash.eq.true",
+    );
+
   const { data: selected } = await supabase
     .from("gmail_cleaner_messages")
     .select("*")
@@ -642,10 +697,18 @@ export async function trashSelectedGmailMessagesAction(
     .eq("is_sent", false)
     .eq("is_spam", false)
     .eq("is_trash", false)
+    .in("suggested_action", ["trash", "review"])
     .limit(2000);
 
-  const candidates = (selected ?? []).filter(
-    (row) => !hasProtectedGmailLabel(row.label_ids),
+  const candidates = (selected ?? []).filter((row) =>
+    isManuallySelectable({
+      protectionStatus: row.protection_status,
+      isSpam: row.is_spam,
+      isTrash: row.is_trash,
+      isDraft: row.is_draft,
+      isSent: row.is_sent,
+      labelIds: row.label_ids,
+    }) && !hasHardBlockedGmailLabel(row.label_ids),
   );
   if (candidates.length === 0) {
     return { error: "No eligible messages are selected for cleanup." };
@@ -694,7 +757,7 @@ export async function trashSelectedGmailMessagesAction(
         row.is_sent ||
         row.is_spam ||
         row.is_trash ||
-        hasProtectedGmailLabel(row.label_ids) ||
+        hasHardBlockedGmailLabel(row.label_ids) ||
         row.email_account_id !== accountId
       ) {
         skippedCount += 1;

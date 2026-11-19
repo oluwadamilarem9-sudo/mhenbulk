@@ -5,6 +5,142 @@ import type { Database } from "@/lib/supabase/database.types";
 import type { GmailCleanerCategory } from "@/features/gmail-cleaner/classify";
 import { CATEGORY_LABELS } from "@/features/gmail-cleaner/classify";
 
+type CleanerClient = Awaited<ReturnType<typeof createClient>>;
+
+async function countEligibleSelected(
+  supabase: CleanerClient,
+  userId: string,
+  scanId: string,
+): Promise<number> {
+  const { count } = await supabase
+    .from("gmail_cleaner_messages")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("scan_id", scanId)
+    .eq("selected", true)
+    .eq("protection_status", "none")
+    .eq("is_draft", false)
+    .eq("is_sent", false)
+    .eq("is_spam", false)
+    .eq("is_trash", false)
+    .in("suggested_action", ["trash", "review"]);
+  return count ?? 0;
+}
+
+async function healScanSelections(
+  supabase: CleanerClient,
+  userId: string,
+  scanId: string,
+): Promise<void> {
+  // Heal rows that must never remain selected (blocked or keep-only).
+  await supabase
+    .from("gmail_cleaner_messages")
+    .update({ selected: false })
+    .eq("user_id", userId)
+    .eq("scan_id", scanId)
+    .eq("selected", true)
+    .or(
+      "protection_status.eq.protected,is_draft.eq.true,is_sent.eq.true,is_spam.eq.true,is_trash.eq.true,suggested_action.eq.keep",
+    );
+
+  const [{ count: clutterCount }, { count: selectedReviewCount }, { count: selectedTrashCount }] =
+    await Promise.all([
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("suggested_action", "trash")
+        .eq("protection_status", "none")
+        .eq("is_draft", false)
+        .eq("is_sent", false)
+        .eq("is_spam", false)
+        .eq("is_trash", false),
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("selected", true)
+        .eq("suggested_action", "review"),
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("selected", true)
+        .eq("suggested_action", "trash")
+        .eq("protection_status", "none")
+        .eq("is_draft", false)
+        .eq("is_sent", false)
+        .eq("is_spam", false)
+        .eq("is_trash", false),
+    ]);
+
+  const clutter = clutterCount ?? 0;
+  const reviewSelected = selectedReviewCount ?? 0;
+  const trashSelected = selectedTrashCount ?? 0;
+
+  // Older category "Select" marked needs-review as selected. If selected volume
+  // exceeds actual clutter candidates, drop those review selections.
+  if (reviewSelected > 0 && trashSelected + reviewSelected > clutter) {
+    await supabase
+      .from("gmail_cleaner_messages")
+      .update({ selected: false })
+      .eq("user_id", userId)
+      .eq("scan_id", scanId)
+      .eq("selected", true)
+      .eq("suggested_action", "review");
+  }
+}
+
+async function liveScanCardCounts(
+  supabase: CleanerClient,
+  userId: string,
+  scanId: string,
+): Promise<{
+  clutterCount: number;
+  protectedCount: number;
+  needsReviewCount: number;
+  selectedCount: number;
+}> {
+  const [clutterRes, protectedRes, needsReviewRes, selectedCount] =
+    await Promise.all([
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("suggested_action", "trash")
+        .eq("protection_status", "none")
+        .eq("is_draft", false)
+        .eq("is_sent", false)
+        .eq("is_spam", false)
+        .eq("is_trash", false),
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("protection_status", "protected"),
+      supabase
+        .from("gmail_cleaner_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("scan_id", scanId)
+        .eq("suggested_action", "review")
+        .neq("protection_status", "protected"),
+      countEligibleSelected(supabase, userId, scanId),
+    ]);
+
+  return {
+    clutterCount: clutterRes.count ?? 0,
+    protectedCount: protectedRes.count ?? 0,
+    needsReviewCount: needsReviewRes.count ?? 0,
+    selectedCount,
+  };
+}
+
 export type GmailCleanerAccountOption = {
   id: string;
   email: string;
@@ -151,12 +287,8 @@ export async function getLatestGmailCleanerScan(
   const { data } = await query.maybeSingle();
   if (!data) return null;
 
-  const { count: selectedCount } = await supabase
-    .from("gmail_cleaner_messages")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("scan_id", data.id)
-    .eq("selected", true);
+  await healScanSelections(supabase, userId, data.id);
+  const live = await liveScanCardCounts(supabase, userId, data.id);
 
   const account = data.email_accounts as { email?: string } | null;
 
@@ -167,14 +299,15 @@ export async function getLatestGmailCleanerScan(
     status: data.status,
     messagesProcessed: data.messages_processed,
     totalEstimate: data.total_estimate,
-    clutterCount: data.clutter_count,
-    protectedCount: data.protected_count,
-    needsReviewCount: data.needs_review_count,
+    // Prefer live message aggregates so cards stay consistent after selection fixes.
+    clutterCount: live.clutterCount,
+    protectedCount: live.protectedCount,
+    needsReviewCount: live.needsReviewCount,
     spamCount: data.spam_count,
     trashCount: data.trash_count,
     draftCount: data.draft_count,
     sentCount: data.sent_count,
-    selectedCount: selectedCount ?? 0,
+    selectedCount: live.selectedCount,
     categoryCounts: parseCounts(data.category_counts),
     errorMessage: data.error_message,
     startedAt: data.started_at,
@@ -355,12 +488,8 @@ export async function getGmailCleanerPageData(
         .eq("user_id", userId)
         .maybeSingle();
       if (specific) {
-        const { count: selectedCount } = await supabase
-          .from("gmail_cleaner_messages")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", userId)
-          .eq("scan_id", specific.id)
-          .eq("selected", true);
+        await healScanSelections(supabase, userId, specific.id);
+        const live = await liveScanCardCounts(supabase, userId, specific.id);
         const account = specific.email_accounts as { email?: string } | null;
         scan = {
           id: specific.id,
@@ -369,14 +498,14 @@ export async function getGmailCleanerPageData(
           status: specific.status,
           messagesProcessed: specific.messages_processed,
           totalEstimate: specific.total_estimate,
-          clutterCount: specific.clutter_count,
-          protectedCount: specific.protected_count,
-          needsReviewCount: specific.needs_review_count,
+          clutterCount: live.clutterCount,
+          protectedCount: live.protectedCount,
+          needsReviewCount: live.needsReviewCount,
           spamCount: specific.spam_count,
           trashCount: specific.trash_count,
           draftCount: specific.draft_count,
           sentCount: specific.sent_count,
-          selectedCount: selectedCount ?? 0,
+          selectedCount: live.selectedCount,
           categoryCounts: parseCounts(specific.category_counts),
           errorMessage: specific.error_message,
           startedAt: specific.started_at,

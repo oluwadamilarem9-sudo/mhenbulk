@@ -131,10 +131,23 @@ export function GmailCleanerPanel({
     };
   }, [scan, scanning, router]);
 
-  const selectedCount = useMemo(
-    () => messages.filter((row) => row.selected).length || scan?.selectedCount || 0,
-    [messages, scan?.selectedCount],
-  );
+  // Authoritative eligible selection count from the scan (not the filtered page).
+  // Page-local checkboxes can still differ under filters; never fall back with `||`
+  // from a filtered zero up to an unrelated stale total.
+  const selectedCount = useMemo(() => {
+    if (typeof scan?.selectedCount === "number") {
+      return scan.selectedCount;
+    }
+    return messages.filter(
+      (row) =>
+        row.selected &&
+        row.protectionStatus !== "protected" &&
+        !row.isDraft &&
+        !row.isSent &&
+        !row.isSpam &&
+        !row.isTrash,
+    ).length;
+  }, [messages, scan?.selectedCount]);
 
   function withAccount(path: string) {
     const params = new URLSearchParams();
