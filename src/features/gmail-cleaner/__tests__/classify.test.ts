@@ -165,6 +165,7 @@ describe("gmail cleaner classification", () => {
     const trash = classifyGmailMessage(
       message({ labelIds: ["TRASH"], headers: { subject: "Old promo" } }),
     );
+    expect(trash.primaryCategory).toBe("already_trash");
     expect(trash.suggestedAction).toBe("keep");
   });
 

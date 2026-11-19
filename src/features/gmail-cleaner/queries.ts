@@ -4,34 +4,34 @@ import type { Database } from "@/lib/supabase/database.types";
 
 import type { GmailCleanerCategory } from "@/features/gmail-cleaner/classify";
 import { CATEGORY_LABELS } from "@/features/gmail-cleaner/classify";
+import {
+  aggregateGmailCleanerStats,
+  emptyCategoryStats,
+  type StatsMessage,
+} from "@/features/gmail-cleaner/stats";
 
 type CleanerClient = Awaited<ReturnType<typeof createClient>>;
-
-async function countEligibleSelected(
-  supabase: CleanerClient,
-  userId: string,
-  scanId: string,
-): Promise<number> {
-  const { count } = await supabase
-    .from("gmail_cleaner_messages")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("scan_id", scanId)
-    .eq("selected", true)
-    .eq("protection_status", "none")
-    .eq("is_draft", false)
-    .eq("is_sent", false)
-    .eq("is_spam", false)
-    .eq("is_trash", false)
-    .in("suggested_action", ["trash", "review"]);
-  return count ?? 0;
-}
 
 async function healScanSelections(
   supabase: CleanerClient,
   userId: string,
   scanId: string,
 ): Promise<void> {
+  // Repair legacy Trash rows that were stored under needs_review.
+  // Safe to ignore when migration 0023 has not been applied yet — live stats
+  // still remap is_trash → already_trash via displayCategoryForStats.
+  await supabase
+    .from("gmail_cleaner_messages")
+    .update({
+      primary_category: "already_trash",
+      suggested_action: "keep",
+      selected: false,
+    })
+    .eq("user_id", userId)
+    .eq("scan_id", scanId)
+    .eq("is_trash", true)
+    .eq("primary_category", "needs_review");
+
   // Heal rows that must never remain selected (blocked or keep-only).
   await supabase
     .from("gmail_cleaner_messages")
@@ -94,7 +94,7 @@ async function healScanSelections(
   }
 }
 
-async function liveScanCardCounts(
+async function loadLiveScanAggregates(
   supabase: CleanerClient,
   userId: string,
   scanId: string,
@@ -102,42 +102,44 @@ async function liveScanCardCounts(
   clutterCount: number;
   protectedCount: number;
   needsReviewCount: number;
+  spamCount: number;
+  trashCount: number;
   selectedCount: number;
+  categoryCounts: Record<GmailCleanerCategory, number>;
+  messagesProcessedLive: number;
 }> {
-  const [clutterRes, protectedRes, needsReviewRes, selectedCount] =
-    await Promise.all([
-      supabase
-        .from("gmail_cleaner_messages")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("scan_id", scanId)
-        .eq("suggested_action", "trash")
-        .eq("protection_status", "none")
-        .eq("is_draft", false)
-        .eq("is_sent", false)
-        .eq("is_spam", false)
-        .eq("is_trash", false),
-      supabase
-        .from("gmail_cleaner_messages")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("scan_id", scanId)
-        .eq("protection_status", "protected"),
-      supabase
-        .from("gmail_cleaner_messages")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("scan_id", scanId)
-        .eq("suggested_action", "review")
-        .neq("protection_status", "protected"),
-      countEligibleSelected(supabase, userId, scanId),
-    ]);
+  const { data } = await supabase
+    .from("gmail_cleaner_messages")
+    .select(
+      "protection_status, suggested_action, selected, is_spam, is_trash, is_draft, is_sent, label_ids, primary_category",
+    )
+    .eq("user_id", userId)
+    .eq("scan_id", scanId);
 
+  const messages: StatsMessage[] = (data ?? []).map((row) => ({
+    protectionStatus: row.protection_status,
+    suggestedAction: row.suggested_action,
+    selected: row.selected,
+    isSpam: row.is_spam,
+    isTrash: row.is_trash,
+    isDraft: row.is_draft,
+    isSent: row.is_sent,
+    labelIds: row.label_ids ?? [],
+    primaryCategory: (row.primary_category in emptyCategoryStats()
+      ? row.primary_category
+      : "needs_review") as GmailCleanerCategory,
+  }));
+
+  const aggregated = aggregateGmailCleanerStats(messages);
   return {
-    clutterCount: clutterRes.count ?? 0,
-    protectedCount: protectedRes.count ?? 0,
-    needsReviewCount: needsReviewRes.count ?? 0,
-    selectedCount,
+    clutterCount: aggregated.cards.potentialClutter,
+    protectedCount: aggregated.cards.protected,
+    needsReviewCount: aggregated.cards.manualReview,
+    spamCount: aggregated.cards.alreadyInSpam,
+    trashCount: aggregated.cards.alreadyInTrash,
+    selectedCount: aggregated.cards.selectedEligible,
+    categoryCounts: aggregated.categories,
+    messagesProcessedLive: aggregated.cards.scanned,
   };
 }
 
@@ -220,31 +222,6 @@ export type GmailCleanerOperationItem = {
   restoredAt: string | null;
 };
 
-function emptyCounts(): Record<GmailCleanerCategory, number> {
-  return {
-    promotions: 0,
-    newsletters: 0,
-    marketing: 0,
-    notifications: 0,
-    social_updates: 0,
-    old_conversations: 0,
-    spam_like: 0,
-    large_attachments: 0,
-    needs_review: 0,
-    protected: 0,
-  };
-}
-
-function parseCounts(value: unknown): Record<GmailCleanerCategory, number> {
-  const base = emptyCounts();
-  if (!value || typeof value !== "object") return base;
-  for (const key of Object.keys(base) as GmailCleanerCategory[]) {
-    const raw = (value as Record<string, unknown>)[key];
-    if (typeof raw === "number" && Number.isFinite(raw)) base[key] = raw;
-  }
-  return base;
-}
-
 export async function listGmailCleanerAccounts(
   userId: string,
 ): Promise<GmailCleanerAccountOption[]> {
@@ -288,7 +265,7 @@ export async function getLatestGmailCleanerScan(
   if (!data) return null;
 
   await healScanSelections(supabase, userId, data.id);
-  const live = await liveScanCardCounts(supabase, userId, data.id);
+  const live = await loadLiveScanAggregates(supabase, userId, data.id);
 
   const account = data.email_accounts as { email?: string } | null;
 
@@ -297,18 +274,21 @@ export async function getLatestGmailCleanerScan(
     emailAccountId: data.email_account_id,
     accountEmail: account?.email ?? "",
     status: data.status,
-    messagesProcessed: data.messages_processed,
+    // Prefer live message row count when available (excludes metadata fetch gaps).
+    messagesProcessed: Math.max(
+      data.messages_processed,
+      live.messagesProcessedLive,
+    ),
     totalEstimate: data.total_estimate,
-    // Prefer live message aggregates so cards stay consistent after selection fixes.
     clutterCount: live.clutterCount,
     protectedCount: live.protectedCount,
     needsReviewCount: live.needsReviewCount,
-    spamCount: data.spam_count,
-    trashCount: data.trash_count,
+    spamCount: live.spamCount,
+    trashCount: live.trashCount,
     draftCount: data.draft_count,
     sentCount: data.sent_count,
     selectedCount: live.selectedCount,
-    categoryCounts: parseCounts(data.category_counts),
+    categoryCounts: live.categoryCounts,
     errorMessage: data.error_message,
     startedAt: data.started_at,
     completedAt: data.completed_at,
@@ -489,24 +469,31 @@ export async function getGmailCleanerPageData(
         .maybeSingle();
       if (specific) {
         await healScanSelections(supabase, userId, specific.id);
-        const live = await liveScanCardCounts(supabase, userId, specific.id);
+        const live = await loadLiveScanAggregates(
+          supabase,
+          userId,
+          specific.id,
+        );
         const account = specific.email_accounts as { email?: string } | null;
         scan = {
           id: specific.id,
           emailAccountId: specific.email_account_id,
           accountEmail: account?.email ?? "",
           status: specific.status,
-          messagesProcessed: specific.messages_processed,
+          messagesProcessed: Math.max(
+            specific.messages_processed,
+            live.messagesProcessedLive,
+          ),
           totalEstimate: specific.total_estimate,
           clutterCount: live.clutterCount,
           protectedCount: live.protectedCount,
           needsReviewCount: live.needsReviewCount,
-          spamCount: specific.spam_count,
-          trashCount: specific.trash_count,
+          spamCount: live.spamCount,
+          trashCount: live.trashCount,
           draftCount: specific.draft_count,
           sentCount: specific.sent_count,
           selectedCount: live.selectedCount,
-          categoryCounts: parseCounts(specific.category_counts),
+          categoryCounts: live.categoryCounts,
           errorMessage: specific.error_message,
           startedAt: specific.started_at,
           completedAt: specific.completed_at,

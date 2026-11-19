@@ -11,6 +11,7 @@ export type GmailCleanerCategory =
   | "spam_like"
   | "large_attachments"
   | "needs_review"
+  | "already_trash"
   | "protected";
 
 export type ClassificationConfidence = "low" | "medium" | "high";
@@ -170,7 +171,7 @@ export function classifyGmailMessage(
 
   if (isTrash) {
     return {
-      primaryCategory: "needs_review",
+      primaryCategory: "already_trash",
       reason: "Already in Gmail Trash — reported separately, not a new cleanup candidate.",
       confidence: "high",
       protectionStatus: "none",
@@ -415,8 +416,13 @@ export const CATEGORY_LABELS: Record<GmailCleanerCategory, string> = {
   notifications: "Notifications",
   social_updates: "Social Updates",
   old_conversations: "Old Conversations",
-  spam_like: "Spam-like",
+  spam_like: "Already in Spam",
   large_attachments: "Large Attachments",
-  needs_review: "Needs Review",
+  needs_review: "Uncertain / needs review",
+  already_trash: "Already in Trash",
   protected: "Protected",
 };
+
+/** Categories that are mailbox-state / protected and never bulk-selected. */
+export const NON_SELECTABLE_CATEGORIES: ReadonlySet<GmailCleanerCategory> =
+  new Set(["protected", "spam_like", "already_trash"]);

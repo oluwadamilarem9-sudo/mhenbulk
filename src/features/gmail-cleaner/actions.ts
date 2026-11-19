@@ -79,6 +79,7 @@ function emptyCategoryCounts(): Record<GmailCleanerCategory, number> {
     spam_like: 0,
     large_attachments: 0,
     needs_review: 0,
+    already_trash: 0,
     protected: 0,
   };
 }
@@ -278,10 +279,12 @@ export async function processGmailScanChunkAction(
       if (classified.protectionStatus === "protected") protectedDelta += 1;
       // Potential clutter = default cleanup candidates only (never review/keep).
       if (defaultSelected) clutterDelta += 1;
-      // Needs review = uncertain suggestions, not merely the needs_review category label.
+      // Manual review card = uncertain suggestions, excluding spam/trash mailbox state.
       if (
         classified.suggestedAction === "review" &&
-        classified.protectionStatus !== "protected"
+        classified.protectionStatus !== "protected" &&
+        !isSpam &&
+        !isTrash
       ) {
         needsReviewDelta += 1;
       }
@@ -561,14 +564,22 @@ export async function selectCategoryForCleanupAction(
         "spam_like",
         "large_attachments",
         "needs_review",
+        "already_trash",
         "protected",
       ]),
       selected: z.boolean(),
     })
     .safeParse({ scanId, category, selected });
   if (!parsed.success) return { error: "Invalid category." };
-  if (parsed.data.category === "protected") {
-    return { error: "Protected messages cannot be selected for cleanup." };
+  if (
+    parsed.data.category === "protected" ||
+    parsed.data.category === "spam_like" ||
+    parsed.data.category === "already_trash"
+  ) {
+    return {
+      error:
+        "Protected, Spam, and Trash messages cannot be selected for cleanup.",
+    };
   }
 
   const { supabase, user } = await requireUser();

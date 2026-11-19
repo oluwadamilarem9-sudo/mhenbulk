@@ -146,7 +146,11 @@ export function summarizeScanSelectionStats(
       protectedCount += 1;
     } else if (isDefaultCleanupCandidate(message)) {
       clutter += 1;
-    } else if (message.suggestedAction === "review") {
+    } else if (
+      message.suggestedAction === "review" &&
+      !message.isSpam &&
+      !message.isTrash
+    ) {
       needsReview += 1;
     }
 

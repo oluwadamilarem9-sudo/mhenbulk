@@ -15,6 +15,7 @@ import {
 } from "@/features/gmail-cleaner/actions";
 import {
   CATEGORY_LABELS,
+  NON_SELECTABLE_CATEGORIES,
   type GmailCleanerCategory,
 } from "@/features/gmail-cleaner/classify";
 import type {
@@ -371,16 +372,50 @@ export function GmailCleanerPanel({
       {scan ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              ["Scanned", scan.messagesProcessed],
-              ["Potential clutter", scan.clutterCount],
-              ["Protected", scan.protectedCount],
-              ["Needs review", scan.needsReviewCount],
-              ["Already in Spam", scan.spamCount],
-              ["Already in Trash", scan.trashCount],
-              ["Selected", selectedCount],
-              ["Last scan", scan.completedAt ? formatDate(scan.completedAt) : scan.status],
-            ].map(([label, value]) => (
+            {(
+              [
+                [
+                  "Scanned",
+                  scan.messagesProcessed,
+                  "Unique Gmail messages loaded in this scan.",
+                ],
+                [
+                  "Potential clutter",
+                  scan.clutterCount,
+                  "Eligible cleanup candidates (suggested Trash).",
+                ],
+                [
+                  "Protected",
+                  scan.protectedCount,
+                  "Starred, Important, drafts, sent, or sensitive mail.",
+                ],
+                [
+                  "Manual review",
+                  scan.needsReviewCount,
+                  "Uncertain messages suggested for manual review — not auto-selected.",
+                ],
+                [
+                  "Already in Spam",
+                  scan.spamCount,
+                  "Mailbox Spam label — reported separately, not new cleanup.",
+                ],
+                [
+                  "Already in Trash",
+                  scan.trashCount,
+                  "Mailbox Trash label — reported separately, not new cleanup.",
+                ],
+                [
+                  "Selected",
+                  selectedCount,
+                  "Currently selected eligible message IDs for cleanup.",
+                ],
+                [
+                  "Last scan",
+                  scan.completedAt ? formatDate(scan.completedAt) : scan.status,
+                  "Latest scan completion time or status.",
+                ],
+              ] as const
+            ).map(([label, value, hint]) => (
               <Card key={String(label)}>
                 <CardContent className="pt-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -389,6 +424,7 @@ export function GmailCleanerPanel({
                   <p className="mt-2 text-2xl font-semibold text-slate-900">
                     {value}
                   </p>
+                  <p className="mt-1 text-xs text-slate-500">{hint}</p>
                 </CardContent>
               </Card>
             ))}
@@ -398,7 +434,10 @@ export function GmailCleanerPanel({
             <CardHeader>
               <CardTitle>Category statistics</CardTitle>
               <CardDescription>
-                Counts from the latest scan for {scan.accountEmail || "this account"}.
+                One primary bucket per message for {scan.accountEmail || "this account"}.
+                “Uncertain / needs review” is the classification category; “Manual review”
+                above counts only messages still suggested for review (not already in
+                Spam/Trash).
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -414,7 +453,7 @@ export function GmailCleanerPanel({
                     <p className="mt-1 text-lg font-semibold text-slate-900">
                       {scan.categoryCounts[category] ?? 0}
                     </p>
-                    {category !== "protected" ? (
+                    {!NON_SELECTABLE_CATEGORIES.has(category) ? (
                       <div className="mt-2 flex gap-2">
                         <button
                           type="button"
