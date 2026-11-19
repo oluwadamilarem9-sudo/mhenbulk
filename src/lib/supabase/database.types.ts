@@ -1637,6 +1637,305 @@ export type Database = {
           },
         ];
       };
+      gmail_cleaner_scans: {
+        Row: {
+          id: string;
+          user_id: string;
+          email_account_id: string;
+          status: string;
+          page_token: string | null;
+          messages_processed: number;
+          total_estimate: number | null;
+          clutter_count: number;
+          protected_count: number;
+          needs_review_count: number;
+          spam_count: number;
+          trash_count: number;
+          draft_count: number;
+          sent_count: number;
+          category_counts: Json;
+          error_message: string | null;
+          cancel_requested: boolean;
+          started_at: string | null;
+          completed_at: string | null;
+          cancelled_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          email_account_id: string;
+          status?: string;
+          page_token?: string | null;
+          messages_processed?: number;
+          total_estimate?: number | null;
+          clutter_count?: number;
+          protected_count?: number;
+          needs_review_count?: number;
+          spam_count?: number;
+          trash_count?: number;
+          draft_count?: number;
+          sent_count?: number;
+          category_counts?: Json;
+          error_message?: string | null;
+          cancel_requested?: boolean;
+          started_at?: string | null;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          email_account_id?: string;
+          status?: string;
+          page_token?: string | null;
+          messages_processed?: number;
+          total_estimate?: number | null;
+          clutter_count?: number;
+          protected_count?: number;
+          needs_review_count?: number;
+          spam_count?: number;
+          trash_count?: number;
+          draft_count?: number;
+          sent_count?: number;
+          category_counts?: Json;
+          error_message?: string | null;
+          cancel_requested?: boolean;
+          started_at?: string | null;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "gmail_cleaner_scans_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      gmail_cleaner_messages: {
+        Row: {
+          id: string;
+          user_id: string;
+          scan_id: string;
+          email_account_id: string;
+          gmail_message_id: string;
+          gmail_thread_id: string | null;
+          sender_name: string | null;
+          sender_email: string | null;
+          subject: string | null;
+          message_date: string | null;
+          label_ids: string[];
+          size_estimate: number | null;
+          primary_category: string;
+          classification_reason: string;
+          confidence: string;
+          protection_status: string;
+          suggested_action: string;
+          selected: boolean;
+          is_spam: boolean;
+          is_trash: boolean;
+          is_draft: boolean;
+          is_sent: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          scan_id: string;
+          email_account_id: string;
+          gmail_message_id: string;
+          gmail_thread_id?: string | null;
+          sender_name?: string | null;
+          sender_email?: string | null;
+          subject?: string | null;
+          message_date?: string | null;
+          label_ids?: string[];
+          size_estimate?: number | null;
+          primary_category: string;
+          classification_reason: string;
+          confidence?: string;
+          protection_status?: string;
+          suggested_action?: string;
+          selected?: boolean;
+          is_spam?: boolean;
+          is_trash?: boolean;
+          is_draft?: boolean;
+          is_sent?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          scan_id?: string;
+          email_account_id?: string;
+          gmail_message_id?: string;
+          gmail_thread_id?: string | null;
+          sender_name?: string | null;
+          sender_email?: string | null;
+          subject?: string | null;
+          message_date?: string | null;
+          label_ids?: string[];
+          size_estimate?: number | null;
+          primary_category?: string;
+          classification_reason?: string;
+          confidence?: string;
+          protection_status?: string;
+          suggested_action?: string;
+          selected?: boolean;
+          is_spam?: boolean;
+          is_trash?: boolean;
+          is_draft?: boolean;
+          is_sent?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "gmail_cleaner_messages_scan_id_fkey";
+            columns: ["scan_id"];
+            isOneToOne: false;
+            referencedRelation: "gmail_cleaner_scans";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      gmail_cleaner_operations: {
+        Row: {
+          id: string;
+          user_id: string;
+          email_account_id: string;
+          scan_id: string | null;
+          status: string;
+          action: string;
+          selected_count: number;
+          success_count: number;
+          failed_count: number;
+          skipped_count: number;
+          category_summary: Json;
+          error_message: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          email_account_id: string;
+          scan_id?: string | null;
+          status?: string;
+          action?: string;
+          selected_count?: number;
+          success_count?: number;
+          failed_count?: number;
+          skipped_count?: number;
+          category_summary?: Json;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          email_account_id?: string;
+          scan_id?: string | null;
+          status?: string;
+          action?: string;
+          selected_count?: number;
+          success_count?: number;
+          failed_count?: number;
+          skipped_count?: number;
+          category_summary?: Json;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "gmail_cleaner_operations_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      gmail_cleaner_operation_items: {
+        Row: {
+          id: string;
+          user_id: string;
+          operation_id: string;
+          email_account_id: string;
+          gmail_message_id: string;
+          gmail_thread_id: string | null;
+          subject: string | null;
+          sender_email: string | null;
+          primary_category: string | null;
+          status: string;
+          error_message: string | null;
+          was_already_trash: boolean;
+          restored_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          operation_id: string;
+          email_account_id: string;
+          gmail_message_id: string;
+          gmail_thread_id?: string | null;
+          subject?: string | null;
+          sender_email?: string | null;
+          primary_category?: string | null;
+          status?: string;
+          error_message?: string | null;
+          was_already_trash?: boolean;
+          restored_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          operation_id?: string;
+          email_account_id?: string;
+          gmail_message_id?: string;
+          gmail_thread_id?: string | null;
+          subject?: string | null;
+          sender_email?: string | null;
+          primary_category?: string | null;
+          status?: string;
+          error_message?: string | null;
+          was_already_trash?: boolean;
+          restored_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "gmail_cleaner_operation_items_operation_id_fkey";
+            columns: ["operation_id"];
+            isOneToOne: false;
+            referencedRelation: "gmail_cleaner_operations";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {

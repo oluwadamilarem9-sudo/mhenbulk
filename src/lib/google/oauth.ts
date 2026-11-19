@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { gmailScopesString } from "@/lib/google/scopes";
+import {
+  gmailScopesString,
+  type GmailOAuthIntent,
+} from "@/lib/google/scopes";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -56,13 +59,15 @@ export function buildGoogleAuthUrl(options: {
   state: string;
   codeChallenge: string;
   prompt?: "consent" | "select_account" | "none";
+  /** Default `send` keeps campaign sending scopes. `cleaner` adds gmail.modify. */
+  intent?: GmailOAuthIntent;
 }): string {
   const { clientId, redirectUri } = requireGoogleConfig();
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: gmailScopesString(),
+    scope: gmailScopesString(options.intent ?? "send"),
     access_type: "offline",
     include_granted_scopes: "true",
     state: options.state,

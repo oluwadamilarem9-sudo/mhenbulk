@@ -7,7 +7,12 @@ import {
   exchangeAuthorizationCode,
   fetchGoogleUserInfo,
 } from "@/lib/google/oauth";
-import { GMAIL_SEND_SCOPES } from "@/lib/google/scopes";
+import {
+  GMAIL_SEND_SCOPES,
+  hasGmailModifyScope,
+  mergeGoogleScopes,
+  normalizeGoogleScopes,
+} from "@/lib/google/scopes";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -15,6 +20,8 @@ export const dynamic = "force-dynamic";
 
 const STATE_COOKIE = "mhenbulk_google_oauth_state";
 const VERIFIER_COOKIE = "mhenbulk_google_oauth_verifier";
+const INTENT_COOKIE = "mhenbulk_google_oauth_intent";
+const RETURN_COOKIE = "mhenbulk_google_oauth_return";
 
 function appUrl(path: string) {
   const base = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(
@@ -28,20 +35,30 @@ function clearOAuthCookies(
   response: NextResponse,
   secure: boolean,
 ) {
-  response.cookies.set(STATE_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure,
-    path: "/",
-    maxAge: 0,
-  });
-  response.cookies.set(VERIFIER_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure,
-    path: "/",
-    maxAge: 0,
-  });
+  for (const name of [
+    STATE_COOKIE,
+    VERIFIER_COOKIE,
+    INTENT_COOKIE,
+    RETURN_COOKIE,
+  ]) {
+    response.cookies.set(name, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: 0,
+    });
+  }
+}
+
+function safeReturnPath(value: string | undefined): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/settings/email-accounts";
+  }
+  if (value.startsWith("/api/")) {
+    return "/settings/email-accounts";
+  }
+  return value.slice(0, 200);
 }
 
 export async function GET(request: Request) {
@@ -51,25 +68,28 @@ export async function GET(request: Request) {
   const oauthError = url.searchParams.get("error");
   const secure = (process.env.NEXT_PUBLIC_APP_URL || "").startsWith("https");
 
+  const cookieStore = await cookies();
+  const returnTo = safeReturnPath(cookieStore.get(RETURN_COOKIE)?.value);
+  const oauthIntent = cookieStore.get(INTENT_COOKIE)?.value;
+
   if (oauthError) {
     const response = NextResponse.redirect(
       appUrl(
         oauthError === "access_denied"
-          ? "/settings/email-accounts?error=oauth_cancelled"
-          : `/settings/email-accounts?error=${encodeURIComponent(oauthError)}`,
+          ? `${returnTo}${returnTo.includes("?") ? "&" : "?"}error=oauth_cancelled`
+          : `${returnTo}${returnTo.includes("?") ? "&" : "?"}error=${encodeURIComponent(oauthError)}`,
       ),
     );
     clearOAuthCookies(response, secure);
     return response;
   }
 
-  const cookieStore = await cookies();
   const expectedState = cookieStore.get(STATE_COOKIE)?.value;
   const codeVerifier = cookieStore.get(VERIFIER_COOKIE)?.value;
 
   if (!code || !state || !expectedState || state !== expectedState || !codeVerifier) {
     const response = NextResponse.redirect(
-      appUrl("/settings/email-accounts?error=invalid_oauth_state"),
+      appUrl(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=invalid_oauth_state`),
     );
     clearOAuthCookies(response, secure);
     return response;
@@ -81,7 +101,9 @@ export async function GET(request: Request) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    const response = NextResponse.redirect(appUrl("/login?next=/settings/email-accounts"));
+    const response = NextResponse.redirect(
+      appUrl(`/login?next=${encodeURIComponent(returnTo)}`),
+    );
     clearOAuthCookies(response, secure);
     return response;
   }
@@ -93,7 +115,7 @@ export async function GET(request: Request) {
 
     if (!profile.email) {
       const response = NextResponse.redirect(
-        appUrl("/settings/email-accounts?error=missing_email"),
+        appUrl(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=missing_email`),
       );
       clearOAuthCookies(response, secure);
       return response;
@@ -103,19 +125,22 @@ export async function GET(request: Request) {
     const tokenExpiry = new Date(
       Date.now() + tokens.expires_in * 1000,
     ).toISOString();
-    const scopes = (tokens.scope || GMAIL_SEND_SCOPES.join(" "))
-      .split(/\s+/)
-      .filter(Boolean);
+    const grantedScopes = normalizeGoogleScopes(
+      tokens.scope || GMAIL_SEND_SCOPES.join(" "),
+    );
 
     const { data: existing } = await service
       .from("email_accounts")
-      .select("id")
+      .select("id, scopes")
       .eq("user_id", user.id)
       .eq("provider", "gmail")
       .eq("provider_account_id", profile.sub)
       .maybeSingle();
 
     let accountId = existing?.id;
+    // Merge so a send-only reconnect cannot wipe a previously granted modify scope
+    // if Google returns a partial scope string.
+    const scopes = mergeGoogleScopes(existing?.scopes, grantedScopes);
 
     if (accountId) {
       const { error: updateError } = await service
@@ -170,7 +195,9 @@ export async function GET(request: Request) {
 
       if (!existingCredentials?.encrypted_refresh_token) {
         const response = NextResponse.redirect(
-          appUrl("/settings/email-accounts?error=missing_refresh_token"),
+          appUrl(
+            `${returnTo}${returnTo.includes("?") ? "&" : "?"}error=missing_refresh_token`,
+          ),
         );
         clearOAuthCookies(response, secure);
         return response;
@@ -208,12 +235,17 @@ export async function GET(request: Request) {
       });
     }
 
+    const query = new URLSearchParams({ connected: "1" });
+    if (resumed > 0) query.set("resumed", "1");
+    if (oauthIntent === "cleaner") {
+      query.set(
+        "mailbox",
+        hasGmailModifyScope(scopes) ? "granted" : "missing_modify",
+      );
+    }
+    const separator = returnTo.includes("?") ? "&" : "?";
     const response = NextResponse.redirect(
-      appUrl(
-        resumed > 0
-          ? "/settings/email-accounts?connected=1&resumed=1"
-          : "/settings/email-accounts?connected=1",
-      ),
+      appUrl(`${returnTo}${separator}${query.toString()}`),
     );
     clearOAuthCookies(response, secure);
     return response;
@@ -224,9 +256,9 @@ export async function GET(request: Request) {
       /environment configuration|is not configured/i.test(error.message);
     const response = NextResponse.redirect(
       appUrl(
-        isConfigError
-          ? "/settings/email-accounts?error=server_misconfigured"
-          : "/settings/email-accounts?error=oauth_failed",
+        `${returnTo}${returnTo.includes("?") ? "&" : "?"}error=${
+          isConfigError ? "server_misconfigured" : "oauth_failed"
+        }`,
       ),
     );
     clearOAuthCookies(response, secure);

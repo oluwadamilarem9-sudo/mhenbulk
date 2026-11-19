@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   FileScan,
   Handshake,
+  Inbox,
   LayoutDashboard,
   Mail,
   Search,
@@ -24,6 +25,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/email-finder", label: "Email Finder", icon: Search },
   { href: "/email-cleaner", label: "Email Cleaner", icon: WandSparkles },
+  { href: "/gmail-cleaner", label: "Gmail Cleaner", icon: Inbox },
   {
     href: "/email-extractor-lite",
     label: "Email Extractor Lite",

@@ -26,13 +26,17 @@ Official reference: [Gmail API overview](https://developers.google.com/gmail/api
 1. Go to **APIs & Services → OAuth consent screen**.
 2. Choose **External** (unless you only use Google Workspace internal users).
 3. Fill in app name, support email, and developer contact.
-4. Add scopes (minimum):
+4. Add scopes (minimum for campaign sending):
    - `https://www.googleapis.com/auth/gmail.send`
    - `openid`
    - `email`
    - `profile`
-5. For local testing, set publishing status to **Testing** and add your Google
+5. Optional for **Gmail Cleaner** mailbox scan/trash (restricted):
+   - `https://www.googleapis.com/auth/gmail.modify`
+6. For local testing, set publishing status to **Testing** and add your Google
    account under **Test users**.
+
+See [`docs/gmail-cleaner.md`](./gmail-cleaner.md) for the cleaner feature.
 
 ### Important testing limits
 
@@ -44,6 +48,10 @@ While the consent screen is in **Testing**:
 For public use you must move to **In production** and complete Google’s OAuth
 verification for the sensitive `gmail.send` scope. Restricted-scope CASA
 assessment is **not** required when you only request `gmail.send`.
+
+If you enable Gmail Cleaner and request `gmail.modify`, Google may require
+additional verification / security assessment for that restricted scope. Do not
+assume verification is complete.
 
 See:
 

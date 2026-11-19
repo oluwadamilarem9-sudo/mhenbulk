@@ -110,8 +110,10 @@ export default function PrivacyPolicyPage() {
       <p>
         Mhenbulk stores the email content you compose for campaigns. When you send through
         a connected Gmail account, that content is transmitted to Google&apos;s Gmail API
-        for delivery. Mhenbulk does not read your Gmail inbox or download received mail
-        from Gmail.
+        for delivery. Campaign sending does not require reading your inbox. If you use the
+        optional Gmail Cleaner feature and grant additional permission, Mhenbulk may read
+        message metadata (and limited snippet data) to classify clutter and, only after
+        your confirmation, move selected messages to Gmail Trash.
       </p>
 
       <h2>6. Connected Gmail and Google account information</h2>
@@ -130,8 +132,22 @@ export default function PrivacyPolicyPage() {
         </li>
       </ul>
       <p>
-        Mhenbulk does <strong>not</strong> request Gmail scopes to read, modify, or manage
-        your mailbox contents (such as inbox read or full mailbox access).
+        If you explicitly enable Gmail Cleaner mailbox access, Mhenbulk also requests:
+      </p>
+      <ul>
+        <li>
+          <code>https://www.googleapis.com/auth/gmail.modify</code> — to list and inspect
+          message metadata across your mailbox labels and to move messages you approve into
+          Gmail Trash (and restore those Mhenbulk-trashed messages when possible). This is
+          a restricted Google scope; production use may require Google OAuth verification
+          and additional security assessment. Verification is not assumed complete by this
+          application.
+        </li>
+      </ul>
+      <p>
+        Existing send-only connections are preserved until you choose to grant mailbox
+        permission. Mhenbulk does not permanently delete Gmail messages; cleanup only moves
+        approved messages to Trash.
       </p>
 
       <h2>7. OAuth authentication</h2>
@@ -167,10 +183,15 @@ export default function PrivacyPolicyPage() {
         <li>Send campaign and test messages you explicitly initiate</li>
         <li>Record send outcomes and message identifiers needed for campaign operations</li>
         <li>Display connection status and troubleshoot sending errors</li>
+        <li>
+          When you use Gmail Cleaner and grant mailbox permission: scan message metadata,
+          classify clutter with rule-based logic, show review suggestions, move approved
+          messages to Trash, and keep an audit history of those cleanup actions
+        </li>
       </ul>
       <p>
-        Mhenbulk does not use Gmail connection data for mailbox verification, inbox
-        reading, or unrelated analytics.
+        Mhenbulk does not sell Gmail data, does not use it for advertising, and does not
+        store full email bodies for Gmail Cleaner results.
       </p>
 
       <h2>10. How Gmail data is stored</h2>
@@ -288,6 +309,15 @@ export default function PrivacyPolicyPage() {
         remain in your workspace until you delete them or delete your account, subject to
         our data deletion practices.
       </p>
+      <p>
+        For Gmail Cleaner, Mhenbulk stores scan metadata and cleanup audit records (such as
+        Gmail message IDs, sender, subject, labels, classification reason, and trash/restore
+        outcomes) associated with your account and connected Gmail account. These records
+        are retained while your account remains active so you can review history and restore
+        eligible messages. Mhenbulk does not retain full Gmail message bodies for Cleaner
+        results. Disconnecting Gmail or deleting your account removes associated Cleaner
+        records according to our deletion practices below.
+      </p>
 
       <h2>19. Data deletion</h2>
       <p>You can remove data in several ways:</p>
@@ -295,7 +325,8 @@ export default function PrivacyPolicyPage() {
         <li>Delete contacts, campaigns, batches, and tool results within the application</li>
         <li>
           Disconnect a Gmail account from Settings → Email Accounts, which revokes tokens
-          where possible and removes stored credentials from Mhenbulk
+          where possible and removes stored credentials from Mhenbulk. Related Gmail Cleaner
+          scan and cleanup records for that account are removed through cascading deletes
         </li>
         <li>
           Request account deletion by contacting us (see Contact information below). Upon
