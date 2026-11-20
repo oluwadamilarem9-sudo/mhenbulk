@@ -59,7 +59,7 @@ export function buildGoogleAuthUrl(options: {
   state: string;
   codeChallenge: string;
   prompt?: "consent" | "select_account" | "none";
-  /** Default `send` keeps campaign sending scopes. `cleaner` adds gmail.modify. */
+  /** Default `send` keeps campaign sending scopes. `cleaner` / `aliases` add gmail.modify. */
   intent?: GmailOAuthIntent;
 }): string {
   const { clientId, redirectUri } = requireGoogleConfig();

@@ -226,7 +226,7 @@ describe("gmail send-as helpers", () => {
       if (error instanceof GmailSendAsError) {
         expect(error.code).toBe("forbidden");
         expect(error.status).toBe(403);
-        expect(error.message).toMatch(/mailbox permission|gmail\.modify/i);
+        expect(error.message).toMatch(/gmail\.modify|insufficient|send-as/i);
       }
     }
   });

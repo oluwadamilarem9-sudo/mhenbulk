@@ -10,26 +10,39 @@ export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 /**
  * Restricted Gmail scope required to list/read metadata and move messages to Trash.
+ * Also sufficient for users.settings.sendAs.list (domain aliases).
  * Production use typically requires Google OAuth verification (and may require a
  * security assessment). Existing send-only connections do not gain this automatically.
  */
 export const GMAIL_MODIFY_SCOPE =
   "https://www.googleapis.com/auth/gmail.modify";
 
-/** Scopes requested when connecting or upgrading for Gmail Cleaner. */
+/** Least-privilege scope that can list Gmail send-as identities. */
+export const GMAIL_SETTINGS_BASIC_SCOPE =
+  "https://www.googleapis.com/auth/gmail.settings.basic";
+
+/**
+ * Scopes for Gmail Cleaner and for campaign domain-alias (send-as) listing.
+ * Reuses gmail.modify so we do not depend on a separate settings.basic consent
+ * screen entry that may not be configured in Google Cloud yet.
+ */
 export const GMAIL_CLEANER_SCOPES = [
   ...GMAIL_SEND_SCOPES,
   GMAIL_MODIFY_SCOPE,
 ] as const;
 
-export type GmailOAuthIntent = "send" | "cleaner";
+/** Same grant as cleaner — used when reconnecting specifically for send-as aliases. */
+export const GMAIL_ALIAS_SCOPES = GMAIL_CLEANER_SCOPES;
+
+export type GmailOAuthIntent = "send" | "cleaner" | "aliases";
 
 export function gmailScopesString(
   intent: GmailOAuthIntent = "send",
 ): string {
-  return (intent === "cleaner" ? GMAIL_CLEANER_SCOPES : GMAIL_SEND_SCOPES).join(
-    " ",
-  );
+  if (intent === "cleaner" || intent === "aliases") {
+    return GMAIL_CLEANER_SCOPES.join(" ");
+  }
+  return GMAIL_SEND_SCOPES.join(" ");
 }
 
 export function normalizeGoogleScopes(
@@ -72,7 +85,15 @@ export function hasGmailSendAsListScope(
   const normalized = normalizeGoogleScopes(scopes);
   return (
     hasGmailModifyScope(normalized) ||
-    normalized.includes("https://www.googleapis.com/auth/gmail.settings.basic") ||
+    normalized.includes(GMAIL_SETTINGS_BASIC_SCOPE) ||
     normalized.includes("https://www.googleapis.com/auth/gmail.readonly")
   );
+}
+
+export function gmailAliasReconnectPath(returnTo: string): string {
+  const safe =
+    returnTo.startsWith("/") && !returnTo.startsWith("//")
+      ? returnTo.slice(0, 200)
+      : "/settings/email-accounts";
+  return `/api/auth/google/start?intent=aliases&returnTo=${encodeURIComponent(safe)}`;
 }

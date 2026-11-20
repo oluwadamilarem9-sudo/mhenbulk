@@ -19,8 +19,9 @@ afterEach(() => {
 });
 
 describe("gmail mailbox helpers", () => {
-  it("requests cleaner scopes including gmail.modify", () => {
+  it("requests cleaner/aliases scopes including gmail.modify", () => {
     expect(gmailScopesString("cleaner")).toContain(GMAIL_MODIFY_SCOPE);
+    expect(gmailScopesString("aliases")).toContain(GMAIL_MODIFY_SCOPE);
     expect(gmailScopesString("send")).not.toContain(GMAIL_MODIFY_SCOPE);
     expect(hasGmailModifyScope([GMAIL_MODIFY_SCOPE])).toBe(true);
     expect(hasGmailModifyScope(["https://www.googleapis.com/auth/gmail.send"])).toBe(

@@ -132,22 +132,25 @@ export default function PrivacyPolicyPage() {
         </li>
       </ul>
       <p>
-        If you explicitly enable Gmail Cleaner mailbox access, Mhenbulk also requests:
+        If you explicitly enable Gmail Cleaner mailbox access or grant send-as / domain-alias
+        permission for campaigns, Mhenbulk also requests:
       </p>
       <ul>
         <li>
-          <code>https://www.googleapis.com/auth/gmail.modify</code> — to list and inspect
-          message metadata across your mailbox labels and to move messages you approve into
-          Gmail Trash (and restore those Mhenbulk-trashed messages when possible). This is
-          a restricted Google scope; production use may require Google OAuth verification
-          and additional security assessment. Verification is not assumed complete by this
-          application.
+          <code>https://www.googleapis.com/auth/gmail.modify</code> — to list verified Gmail
+          “Send mail as” identities for campaign From selection, and (when using Gmail
+          Cleaner) to list and inspect message metadata across your mailbox labels and move
+          messages you approve into Gmail Trash (and restore those Mhenbulk-trashed messages
+          when possible). This is a restricted Google scope; production use may require
+          Google OAuth verification and additional security assessment. Verification is not
+          assumed complete by this application.
         </li>
       </ul>
       <p>
         Existing send-only connections are preserved until you choose to grant mailbox
-        permission. Mhenbulk does not permanently delete Gmail messages; cleanup only moves
-        approved messages to Trash.
+        permission. A standard Gmail reconnect for sending does not by itself enable domain
+        aliases or Cleaner. Mhenbulk does not permanently delete Gmail messages; cleanup only
+        moves approved messages to Trash.
       </p>
 
       <h2>7. OAuth authentication</h2>

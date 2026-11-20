@@ -18,7 +18,8 @@ const INTENT_COOKIE = "mhenbulk_google_oauth_intent";
 const RETURN_COOKIE = "mhenbulk_google_oauth_return";
 
 function parseIntent(value: string | null): GmailOAuthIntent {
-  return value === "cleaner" ? "cleaner" : "send";
+  if (value === "cleaner" || value === "aliases") return value;
+  return "send";
 }
 
 function parseReturnPath(value: string | null): string {

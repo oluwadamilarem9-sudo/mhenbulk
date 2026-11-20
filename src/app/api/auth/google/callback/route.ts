@@ -139,8 +139,19 @@ export async function GET(request: Request) {
 
     let accountId = existing?.id;
     // Merge so a send-only reconnect cannot wipe a previously granted modify scope
-    // if Google returns a partial scope string.
+    // if Google returns a partial scope string. include_granted_scopes=true should
+    // already return the full grant; merge is a safety net for partial responses.
     const scopes = mergeGoogleScopes(existing?.scopes, grantedScopes);
+
+    console.info("[google-oauth] scopes persisted", {
+      accountEmail: profile.email.toLowerCase(),
+      intent: oauthIntent ?? "send",
+      grantedScopes,
+      storedScopes: scopes,
+      hasModify: hasGmailModifyScope(scopes),
+      providerAccountId: profile.sub,
+      existingAccountId: accountId ?? null,
+    });
 
     if (accountId) {
       const { error: updateError } = await service
@@ -245,11 +256,17 @@ export async function GET(request: Request) {
 
     const query = new URLSearchParams({ connected: "1" });
     if (resumed > 0) query.set("resumed", "1");
-    if (oauthIntent === "cleaner") {
+    if (oauthIntent === "cleaner" || oauthIntent === "aliases") {
       query.set(
         "mailbox",
         hasGmailModifyScope(scopes) ? "granted" : "missing_modify",
       );
+      if (oauthIntent === "aliases") {
+        query.set(
+          "aliases",
+          hasGmailModifyScope(scopes) ? "granted" : "missing_modify",
+        );
+      }
     }
     const separator = returnTo.includes("?") ? "&" : "?";
     const response = NextResponse.redirect(

@@ -374,8 +374,10 @@ export async function listGmailSendAsIdentitiesWithStatus(
 
   if (response.status === 403) {
     throw new GmailSendAsError(
-      lower.includes("insufficient") || lower.includes("scope")
-        ? "This Gmail connection cannot list send-as aliases. Reconnect with mailbox permission (gmail.modify) to use domain aliases."
+      lower.includes("insufficient") ||
+        lower.includes("scope") ||
+        lower.includes("access_token_scope_insufficient")
+        ? "Gmail rejected send-as listing: this account's OAuth token does not include mailbox permission (gmail.modify). Use “Grant send-as permission” and approve mailbox access for this exact Gmail account, then reload the campaign form."
         : `Gmail refused send-as listing: ${body.slice(0, 200)}`,
       "forbidden",
       response.status,

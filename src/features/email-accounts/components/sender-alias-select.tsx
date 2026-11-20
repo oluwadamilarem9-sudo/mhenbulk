@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
+import { usePathname } from "next/navigation";
 
 import { listSendAsAliasesAction } from "@/features/campaigns/send-as-actions";
+import { gmailAliasReconnectPath } from "@/lib/google/scopes";
 import { Label } from "@/components/ui/label";
 
 type AliasOption = {
@@ -52,6 +55,7 @@ export function SenderAliasSelect({
   disabled,
   error,
 }: SenderAliasSelectProps) {
+  const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const [state, setState] = useState<AliasLoadState>({
     accountId: null,
@@ -122,6 +126,11 @@ export function SenderAliasSelect({
   const accountEmail = isCurrent ? state.accountEmail : null;
   const diagnostics = isCurrent ? state.diagnostics : null;
   const excluded = inventory.filter((item) => !item.usable);
+  const needsAliasPermission =
+    Boolean(warning?.toLowerCase().includes("gmail.modify")) ||
+    diagnostics?.httpStatus === 403 ||
+    diagnostics?.hasListScopeInDb === false;
+  const reconnectHref = gmailAliasReconnectPath(pathname || "/campaigns/new");
 
   return (
     <div className="space-y-2">
@@ -165,8 +174,33 @@ export function SenderAliasSelect({
         </span>{" "}
         only. Unverified identities cannot be selected.
       </p>
-      {warning ? (
+      {needsAliasPermission ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <p>
+            Domain aliases need mailbox permission on{" "}
+            <span className="font-medium">
+              {accountEmail ?? "this Gmail account"}
+            </span>
+            . A normal “Reconnect Gmail” from Settings only grants send access
+            and is not enough.
+          </p>
+          <p className="mt-2">
+            <Link
+              href={reconnectHref}
+              className="font-medium text-amber-950 underline underline-offset-2"
+            >
+              Grant send-as permission (gmail.modify)
+            </Link>{" "}
+            for this exact account, approve mailbox access in Google, then
+            return here.
+          </p>
+        </div>
+      ) : null}
+      {warning && !needsAliasPermission ? (
         <p className="text-xs text-amber-700">{warning}</p>
+      ) : null}
+      {warning && needsAliasPermission ? (
+        <p className="text-xs text-amber-800">{warning}</p>
       ) : null}
       {loadError ? <p className="text-xs text-rose-600">{loadError}</p> : null}
       {error ? <p className="text-xs text-rose-600">{error}</p> : null}

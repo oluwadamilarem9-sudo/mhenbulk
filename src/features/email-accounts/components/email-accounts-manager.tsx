@@ -36,6 +36,10 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  gmailAliasReconnectPath,
+  hasGmailSendAsListScope,
+} from "@/lib/google/scopes";
 import { cn } from "@/lib/utils";
 
 const initialTestState: EmailAccountActionState = {};
@@ -307,6 +311,20 @@ export function EmailAccountsManager({
                         Reconnect Gmail
                       </Link>
                     ) : null}
+                    {account.provider === "gmail" &&
+                    !hasGmailSendAsListScope(account.scopes) ? (
+                      <Link
+                        href={gmailAliasReconnectPath(
+                          "/settings/email-accounts",
+                        )}
+                        className={cn(
+                          linkButtonClass,
+                          "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-500",
+                        )}
+                      >
+                        Grant send-as permission
+                      </Link>
+                    ) : null}
                     <Button
                       variant="ghost"
                       className="text-rose-600 hover:bg-rose-50"
@@ -317,6 +335,23 @@ export function EmailAccountsManager({
                     </Button>
                   </div>
                 </div>
+
+                {account.provider === "gmail" &&
+                !hasGmailSendAsListScope(account.scopes) ? (
+                  <p className="mt-3 text-xs text-amber-700">
+                    Domain aliases (Send mail as) need mailbox permission.
+                    “Reconnect Gmail” alone only grants send access — use Grant
+                    send-as permission and approve gmail.modify for this
+                    account.
+                  </p>
+                ) : null}
+                {account.provider === "gmail" &&
+                hasGmailSendAsListScope(account.scopes) ? (
+                  <p className="mt-3 text-xs text-emerald-700">
+                    Mailbox permission granted — domain aliases can be listed
+                    for campaigns.
+                  </p>
+                ) : null}
 
                 <WarmupPanel account={account} />
 

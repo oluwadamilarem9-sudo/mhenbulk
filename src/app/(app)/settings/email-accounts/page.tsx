@@ -20,6 +20,20 @@ function firstParam(
 
 function flashFromParams(params: Record<string, string | string[] | undefined>) {
   if (firstParam(params.connected) === "1") {
+    if (firstParam(params.aliases) === "granted") {
+      return {
+        kind: "success" as const,
+        message:
+          "Mailbox permission granted. Domain aliases can now be listed for campaigns.",
+      };
+    }
+    if (firstParam(params.aliases) === "missing_modify") {
+      return {
+        kind: "error" as const,
+        message:
+          "Gmail connected, but mailbox permission (gmail.modify) was not granted. Domain aliases will stay unavailable until you approve it.",
+      };
+    }
     return {
       kind: "success" as const,
       message: "Gmail connected successfully.",

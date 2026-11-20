@@ -26,6 +26,8 @@ export type EmailAccountPublic = {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Stored OAuth scopes for Gmail accounts (empty/omitted for API-key providers). */
+  scopes?: string[] | null;
   // Warm-up / daily limit
   daily_send_limit: number | null;
   today_sent_count: number;

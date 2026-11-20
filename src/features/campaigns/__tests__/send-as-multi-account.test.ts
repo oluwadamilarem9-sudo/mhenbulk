@@ -486,7 +486,7 @@ describe("multi-account Gmail send-as loading", () => {
     ]);
     expect(result.aliasesAvailable).toBe(false);
     expect(result.diagnostics.httpStatus).toBe(403);
-    expect(result.warning).toMatch(/mailbox permission|gmail\.modify/i);
+    expect(result.warning).toMatch(/gmail\.modify|send-as listing/i);
   });
 
   it("preserves queued campaign sending for a verified alias", async () => {

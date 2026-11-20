@@ -12,7 +12,10 @@ import {
   type SendAsInventoryItem,
   type UsableGmailSendAs,
 } from "@/lib/google/gmail-send-as";
-import { hasGmailSendAsListScope } from "@/lib/google/scopes";
+import {
+  hasGmailSendAsListScope,
+  normalizeGoogleScopes,
+} from "@/lib/google/scopes";
 import {
   GoogleTokenRefreshError,
   refreshGoogleAccessTokenWithRetry,
@@ -141,6 +144,10 @@ async function getGmailAccessToken(
           ),
         })
         .eq("email_account_id", account.id);
+      // When Google returns scope on refresh, persist it so DB matches the token.
+      const refreshedScopes = refreshed.scope
+        ? normalizeGoogleScopes(refreshed.scope)
+        : null;
       await supabase
         .from("email_accounts")
         .update({
@@ -149,6 +156,7 @@ async function getGmailAccessToken(
             Date.now() + refreshed.expires_in * 1000,
           ).toISOString(),
           last_error: null,
+          ...(refreshedScopes ? { scopes: refreshedScopes } : {}),
         })
         .eq("id", account.id);
     } catch (error) {
