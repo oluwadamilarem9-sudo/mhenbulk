@@ -231,6 +231,7 @@ export type Database = {
           last_count_reset_date: string | null;
           warmup_enabled: boolean;
           warmup_start_date: string | null;
+          preferred_send_as_email: string | null;
         };
         Insert: {
           id?: string;
@@ -252,6 +253,7 @@ export type Database = {
           last_count_reset_date?: string | null;
           warmup_enabled?: boolean;
           warmup_start_date?: string | null;
+          preferred_send_as_email?: string | null;
         };
         Update: {
           id?: string;
@@ -273,8 +275,68 @@ export type Database = {
           last_count_reset_date?: string | null;
           warmup_enabled?: boolean;
           warmup_start_date?: string | null;
+          preferred_send_as_email?: string | null;
         };
         Relationships: [];
+      };
+      email_account_send_as: {
+        Row: {
+          id: string;
+          user_id: string;
+          email_account_id: string;
+          send_as_email: string;
+          display_name: string | null;
+          reply_to_email: string | null;
+          is_primary: boolean;
+          is_default: boolean;
+          treat_as_alias: boolean;
+          verification_status: string | null;
+          is_usable: boolean;
+          synced_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          email_account_id: string;
+          send_as_email: string;
+          display_name?: string | null;
+          reply_to_email?: string | null;
+          is_primary?: boolean;
+          is_default?: boolean;
+          treat_as_alias?: boolean;
+          verification_status?: string | null;
+          is_usable?: boolean;
+          synced_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          email_account_id?: string;
+          send_as_email?: string;
+          display_name?: string | null;
+          reply_to_email?: string | null;
+          is_primary?: boolean;
+          is_default?: boolean;
+          treat_as_alias?: boolean;
+          verification_status?: string | null;
+          is_usable?: boolean;
+          synced_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "email_account_send_as_email_account_id_fkey";
+            columns: ["email_account_id"];
+            isOneToOne: false;
+            referencedRelation: "email_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       email_account_credentials: {
         Row: {
@@ -323,6 +385,7 @@ export type Database = {
           email_account_id: string | null;
           from_email: string | null;
           from_name: string | null;
+          reply_to_email: string | null;
           pause_reason: string | null;
           automation_enabled: boolean;
           timezone: string;
@@ -346,6 +409,7 @@ export type Database = {
           email_account_id?: string | null;
           from_email?: string | null;
           from_name?: string | null;
+          reply_to_email?: string | null;
           pause_reason?: string | null;
           automation_enabled?: boolean;
           timezone?: string;
@@ -369,6 +433,7 @@ export type Database = {
           email_account_id?: string | null;
           from_email?: string | null;
           from_name?: string | null;
+          reply_to_email?: string | null;
           pause_reason?: string | null;
           automation_enabled?: boolean;
           timezone?: string;

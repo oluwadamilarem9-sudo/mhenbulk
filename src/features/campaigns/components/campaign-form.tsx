@@ -11,6 +11,8 @@ import type { CampaignActionState } from "@/features/campaigns/schemas";
 import type { CampaignRow } from "@/features/campaigns/queries";
 import type { EmailAccountPublic } from "@/features/email-accounts/schemas";
 import { SenderAccountSelect } from "@/features/email-accounts/components/sender-account-select";
+import { SenderAliasSelect } from "@/features/email-accounts/components/sender-alias-select";
+import { preferredSenderAccountId } from "@/features/email-accounts/sender-eligibility";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +62,9 @@ export function CampaignForm({
   );
   const [htmlContent, setHtmlContent] = useState(campaign?.html_content ?? "");
   const [textContent, setTextContent] = useState(campaign?.text_content ?? "");
+  const [emailAccountId, setEmailAccountId] = useState(
+    preferredSenderAccountId(emailAccounts, campaign?.email_account_id) ?? "",
+  );
 
   return (
     <form action={formAction} className="space-y-5">
@@ -70,9 +75,18 @@ export function CampaignForm({
 
       <SenderAccountSelect
         accounts={emailAccounts}
+        value={emailAccountId}
         defaultValue={campaign?.email_account_id}
         disabled={pending}
         error={state.fieldErrors?.emailAccountId?.[0]}
+        onAccountChange={setEmailAccountId}
+      />
+
+      <SenderAliasSelect
+        emailAccountId={emailAccountId || null}
+        defaultFromEmail={campaign?.from_email}
+        disabled={pending}
+        error={state.fieldErrors?.fromEmail?.[0]}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">

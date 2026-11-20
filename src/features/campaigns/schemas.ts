@@ -53,6 +53,13 @@ export const campaignSchema = z.object({
     .optional()
     .or(z.literal("")),
   emailAccountId: z.string().uuid("Select a connected sending account"),
+  fromEmail: z
+    .string()
+    .trim()
+    .email("Select a valid sending address")
+    .max(320, "Sending address is too long")
+    .optional()
+    .or(z.literal("")),
 });
 
 export const campaignTestEmailSchema = z.object({

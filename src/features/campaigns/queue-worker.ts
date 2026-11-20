@@ -12,12 +12,14 @@ import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { renderCampaignEmail } from "@/lib/email/render";
 import { misarmailIdempotencyKey } from "@/lib/email/providers/misarmail";
+import { resolveSenderForQueuedCampaign } from "@/features/campaigns/send-as";
 import { resolveEmailProviderForAccount } from "@/lib/email/resolve-provider";
 import { effectiveDailySendLimit } from "@/lib/email/daily-limit";
 import { buildUnsubscribeUrl } from "@/lib/email/unsubscribe";
 import { appendOpenTrackPixel } from "@/lib/email/open-track";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
+import type { SendEmailResult } from "@/lib/email/types";
 
 const RETRY_BASE_DELAY_MS = 60_000;
 // Long enough for a Gmail round-trip to finish, short enough that a killed
@@ -872,29 +874,98 @@ export async function processCampaignQueueBatch(
     // Invisible open pixel — records when the image loads. Not spam-folder proof.
     const trackedHtml = appendOpenTrackPixel(rendered.html, recipient.id);
 
-    console.info("[QUEUE] Gmail request started", {
-      jobId: recipient.id,
-      campaignId: campaign.id,
-      batchId: recipient.campaign_batch_id,
-      sendingAccountId: recipient.email_account_id,
-    });
-    const result = await provider.send({
-      to: recipient.to_email,
-      subject: rendered.subject,
-      html: trackedHtml,
-      text: rendered.text,
-      from: resolved.value.email,
-      fromName: resolved.value.displayName ?? undefined,
-      headers: {
-        // Rendered by mail clients as their own unsubscribe control, so the
-        // message body stays free of footer text. Gmail copies these into the
-        // MIME message. MisarMail ignores headers it is not documented to accept.
-        "List-Unsubscribe": `<${unsubscribeUrl}>`,
-        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-      },
-      threadId: threadId ?? undefined,
-      idempotencyKey: misarmailIdempotencyKey(recipient.id),
-    });
+    const sendingAccountId =
+      recipient.email_account_id ?? campaign.email_account_id;
+    if (!sendingAccountId) {
+      await supabase
+        .from("campaign_recipients")
+        .update({
+          status: "failed",
+          last_error: "Campaign has no sending account.",
+          claimed_at: null,
+          claim_expires_at: null,
+          claim_token: null,
+        })
+        .eq("id", recipient.id)
+        .eq("user_id", userId)
+        .eq("claim_token", claimToken);
+      failed += 1;
+      continue;
+    }
+
+    const senderIdentity = await resolveSenderForQueuedCampaign(
+      trusted,
+      userId,
+      sendingAccountId,
+      campaign.from_email,
+      campaign.from_name,
+      campaign.reply_to_email ?? null,
+    );
+
+    let result: SendEmailResult;
+    if (!senderIdentity.ok) {
+      if (!senderIdentity.retryable) {
+        // Never fall back to the primary Gmail address — pause this campaign.
+        await supabase
+          .from("campaigns")
+          .update({
+            status: "paused",
+            paused_at: new Date().toISOString(),
+            pause_reason: "invalid_from",
+          })
+          .eq("id", campaign.id)
+          .eq("user_id", userId)
+          .eq("status", "sending");
+        await supabase
+          .from("campaign_recipients")
+          .update({
+            status: "failed",
+            last_error: senderIdentity.error,
+            claimed_at: null,
+            claim_expires_at: null,
+            claim_token: null,
+          })
+          .eq("id", recipient.id)
+          .eq("user_id", userId)
+          .eq("claim_token", claimToken);
+        failed += 1;
+        continue;
+      }
+      result = {
+        success: false,
+        provider: resolved.value.provider.name,
+        retryable: true,
+        errorCode: "provider_error",
+        error: senderIdentity.error,
+        retryAfterMs: 60_000,
+      };
+    } else {
+      console.info("[QUEUE] Gmail request started", {
+        jobId: recipient.id,
+        campaignId: campaign.id,
+        batchId: recipient.campaign_batch_id,
+        sendingAccountId: recipient.email_account_id,
+        fromEmail: senderIdentity.fromEmail,
+      });
+      result = await provider.send({
+        to: recipient.to_email,
+        subject: rendered.subject,
+        html: trackedHtml,
+        text: rendered.text,
+        from: senderIdentity.fromEmail,
+        fromName: senderIdentity.fromName ?? undefined,
+        replyTo: senderIdentity.replyToEmail ?? undefined,
+        headers: {
+          // Rendered by mail clients as their own unsubscribe control, so the
+          // message body stays free of footer text. Gmail copies these into the
+          // MIME message. MisarMail ignores headers it is not documented to accept.
+          "List-Unsubscribe": `<${unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+        threadId: threadId ?? undefined,
+        idempotencyKey: misarmailIdempotencyKey(recipient.id),
+      });
+    }
     console.info("[QUEUE] Gmail request completed", {
       jobId: recipient.id,
       campaignId: campaign.id,

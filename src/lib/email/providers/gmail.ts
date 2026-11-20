@@ -108,9 +108,11 @@ export class GmailProvider implements EmailProvider {
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     try {
       const { gmailSendTimeoutMs } = getQueueConfig();
+      // Callers must validate aliases against Gmail sendAs before setting input.from.
+      const fromEmail = (input.from?.trim() || this.fromEmail).toLowerCase();
       const raw = buildMimeMessage({
         ...input,
-        fromEmail: this.fromEmail,
+        fromEmail,
         fromName: input.fromName ?? this.fromName ?? undefined,
       });
 

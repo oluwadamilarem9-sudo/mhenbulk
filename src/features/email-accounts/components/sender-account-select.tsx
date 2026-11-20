@@ -12,19 +12,24 @@ type SenderAccountSelectProps = {
   accounts: EmailAccountPublic[];
   name?: string;
   defaultValue?: string | null;
+  value?: string | null;
   disabled?: boolean;
   error?: string;
+  onAccountChange?: (accountId: string) => void;
 };
 
 export function SenderAccountSelect({
   accounts,
   name = "emailAccountId",
   defaultValue,
+  value,
   disabled,
   error,
+  onAccountChange,
 }: SenderAccountSelectProps) {
   const selectable = selectableSenderAccounts(accounts);
-  const selectedId = preferredSenderAccountId(accounts, defaultValue);
+  const selectedId =
+    value ?? preferredSenderAccountId(accounts, defaultValue);
 
   return (
     <div className="space-y-2">
@@ -43,7 +48,8 @@ export function SenderAccountSelect({
           name={name}
           required
           disabled={disabled}
-          defaultValue={selectedId}
+          value={selectedId}
+          onChange={(event) => onAccountChange?.(event.target.value)}
           className="flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {selectable.map((account) => (
@@ -54,8 +60,8 @@ export function SenderAccountSelect({
         </select>
       )}
       <p className="text-xs text-slate-500">
-        Recipients will see the selected account&apos;s address as the sender.
-        You cannot type a different From address.
+        Choose the connected Gmail (or other) account that authenticates sending.
+        Verified Send mail as aliases for that account appear below.
       </p>
       {error ? <p className="text-xs text-rose-600">{error}</p> : null}
     </div>

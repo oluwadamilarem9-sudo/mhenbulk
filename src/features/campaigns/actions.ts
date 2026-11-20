@@ -12,6 +12,7 @@ import {
   type CampaignActionState,
 } from "@/features/campaigns/schemas";
 import { campaignSenderBlock } from "@/features/email-accounts/sender-eligibility";
+import { resolveVerifiedCampaignSender } from "@/features/campaigns/send-as";
 import { getQueueConfig } from "@/lib/env";
 import { userFacingEmailError } from "@/lib/email/errors";
 import { misarmailTestSendOptions, testSendSuccessMessage } from "@/lib/email/providers/misarmail";
@@ -104,6 +105,7 @@ function parseCampaignForm(formData: FormData) {
     htmlContent: formData.get("htmlContent"),
     textContent: formData.get("textContent") ?? "",
     emailAccountId: formData.get("emailAccountId"),
+    fromEmail: formData.get("fromEmail") ?? "",
   });
 }
 
@@ -149,6 +151,16 @@ export async function createCampaignAction(
   const blocked = campaignSenderBlock(sender);
   if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
 
+  const fromIdentity = await resolveVerifiedCampaignSender(
+    supabase,
+    user.id,
+    sender.id,
+    parsed.data.fromEmail || sender.email,
+  );
+  if (!fromIdentity.ok) {
+    return { error: fromIdentity.error };
+  }
+
   const { data, error } = await supabase
     .from("campaigns")
     .insert({
@@ -158,8 +170,9 @@ export async function createCampaignAction(
       html_content: parsed.data.htmlContent,
       text_content: parsed.data.textContent || null,
       email_account_id: sender.id,
-      from_email: sender.email,
-      from_name: sender.display_name,
+      from_email: fromIdentity.value.fromEmail,
+      from_name: fromIdentity.value.fromName,
+      reply_to_email: fromIdentity.value.replyToEmail,
     })
     .select("id")
     .single();
@@ -286,6 +299,16 @@ export async function updateCampaignAction(
   const blocked = campaignSenderBlock(sender);
   if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
 
+  const fromIdentity = await resolveVerifiedCampaignSender(
+    supabase,
+    user.id,
+    sender.id,
+    parsed.data.fromEmail || sender.email,
+  );
+  if (!fromIdentity.ok) {
+    return { error: fromIdentity.error };
+  }
+
   const { data: updated, error } = await supabase
     .from("campaigns")
     .update({
@@ -294,8 +317,9 @@ export async function updateCampaignAction(
       html_content: parsed.data.htmlContent,
       text_content: parsed.data.textContent || null,
       email_account_id: sender.id,
-      from_email: sender.email,
-      from_name: sender.display_name,
+      from_email: fromIdentity.value.fromEmail,
+      from_name: fromIdentity.value.fromName,
+      reply_to_email: fromIdentity.value.replyToEmail,
     })
     .eq("id", idResult.data)
     .eq("user_id", user.id)
@@ -509,6 +533,16 @@ export async function sendTestEmailAction(
     return { error: resolved.error };
   }
 
+  const fromIdentity = await resolveVerifiedCampaignSender(
+    service,
+    user.id,
+    campaign.email_account_id,
+    campaign.from_email || resolved.value.email,
+  );
+  if (!fromIdentity.ok) {
+    return { error: fromIdentity.error };
+  }
+
   const sendSubject = subjectForSend(campaign.subject);
   const rendered = renderCampaignEmail({
     subject: sendSubject ? `[TEST] ${sendSubject}` : "[TEST]",
@@ -527,8 +561,9 @@ export async function sendTestEmailAction(
     subject: rendered.subject,
     html: rendered.html,
     text: rendered.text,
-    from: resolved.value.email,
-    fromName: resolved.value.displayName ?? undefined,
+    from: fromIdentity.value.fromEmail,
+    fromName: fromIdentity.value.fromName ?? undefined,
+    replyTo: fromIdentity.value.replyToEmail ?? undefined,
     ...misarmailTestSendOptions(
       resolved.value.provider.name,
       campaign.id,
@@ -588,7 +623,7 @@ export async function startCampaignAction(
 
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, status, email_account_id")
+    .select("id, status, email_account_id, from_email, from_name, reply_to_email")
     .eq("id", idResult.data)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -616,6 +651,16 @@ export async function startCampaignAction(
 
   const blocked = campaignSenderBlock(sender);
   if (!sender || blocked) return { error: blocked ?? "Gmail is not connected." };
+
+  const launchFrom = await resolveVerifiedCampaignSender(
+    supabase,
+    user.id,
+    sender.id,
+    campaign.from_email || sender.email,
+  );
+  if (!launchFrom.ok) {
+    return { error: launchFrom.error };
+  }
 
   if (sender.status === "rate_limited") {
     return {
@@ -753,8 +798,10 @@ export async function startCampaignAction(
       status: "sending",
       started_at: new Date().toISOString(),
       pause_reason: null,
-      from_email: sender.email,
-      from_name: sender.display_name,
+      // Re-confirm the stored alias; never silently switch to primary.
+      from_email: launchFrom.value.fromEmail,
+      from_name: launchFrom.value.fromName,
+      reply_to_email: launchFrom.value.replyToEmail,
     })
     .eq("id", campaign.id)
     .eq("user_id", user.id)
