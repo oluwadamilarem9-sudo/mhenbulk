@@ -64,3 +64,15 @@ export function hasGmailModifyScope(
     normalized.includes("https://mail.google.com/")
   );
 }
+
+/** Scopes that can call users.settings.sendAs.list (per Google docs). */
+export function hasGmailSendAsListScope(
+  scopes: string[] | string | null | undefined,
+): boolean {
+  const normalized = normalizeGoogleScopes(scopes);
+  return (
+    hasGmailModifyScope(normalized) ||
+    normalized.includes("https://www.googleapis.com/auth/gmail.settings.basic") ||
+    normalized.includes("https://www.googleapis.com/auth/gmail.readonly")
+  );
+}

@@ -83,6 +83,7 @@ export function CampaignForm({
       />
 
       <SenderAliasSelect
+        key={emailAccountId || "no-account"}
         emailAccountId={emailAccountId || null}
         defaultFromEmail={campaign?.from_email}
         disabled={pending}

@@ -223,6 +223,14 @@ export async function GET(request: Request) {
       throw credError;
     }
 
+    // Drop stale per-account send-as cache so the next campaign load re-lists
+    // aliases with this account's freshly granted token/scopes.
+    await service
+      .from("email_account_send_as")
+      .delete()
+      .eq("email_account_id", accountId)
+      .eq("user_id", user.id);
+
     const resumed = await resumeCampaignsAfterAccountReconnect(
       service,
       user.id,

@@ -13,6 +13,16 @@ type AliasOption = {
   isDefault: boolean;
 };
 
+type InventoryItem = {
+  email: string;
+  displayName: string | null;
+  isPrimary: boolean;
+  isDefault: boolean;
+  usable: boolean;
+  statusLabel: string;
+  verificationStatus: string | null;
+};
+
 type SenderAliasSelectProps = {
   emailAccountId: string | null;
   defaultFromEmail?: string | null;
@@ -22,10 +32,18 @@ type SenderAliasSelectProps = {
 
 type AliasLoadState = {
   accountId: string | null;
+  accountEmail: string | null;
   aliases: AliasOption[];
+  inventory: InventoryItem[];
   warning: string | null;
   loadError: string | null;
   selected: string;
+  diagnostics: {
+    hasListScopeInDb: boolean;
+    httpStatus: number | null;
+    returnedCount: number;
+    usableCount: number;
+  } | null;
 };
 
 export function SenderAliasSelect({
@@ -37,10 +55,13 @@ export function SenderAliasSelect({
   const [pending, startTransition] = useTransition();
   const [state, setState] = useState<AliasLoadState>({
     accountId: null,
+    accountEmail: null,
     aliases: [],
+    inventory: [],
     warning: null,
     loadError: null,
     selected: defaultFromEmail ?? "",
+    diagnostics: null,
   });
 
   useEffect(() => {
@@ -53,10 +74,13 @@ export function SenderAliasSelect({
       if (result.error) {
         setState({
           accountId: emailAccountId,
+          accountEmail: null,
           aliases: [],
+          inventory: [],
           warning: null,
           loadError: result.error,
           selected: "",
+          diagnostics: null,
         });
         return;
       }
@@ -70,11 +94,14 @@ export function SenderAliasSelect({
             ? defaultFromEmail
             : aliases[0]?.email ?? "";
       setState({
-        accountId: emailAccountId,
+        accountId: result.accountId ?? emailAccountId,
+        accountEmail: result.accountEmail ?? null,
         aliases,
+        inventory: result.inventory ?? [],
         warning: result.warning ?? null,
         loadError: null,
         selected: preferred,
+        diagnostics: result.diagnostics ?? null,
       });
     });
 
@@ -85,16 +112,16 @@ export function SenderAliasSelect({
 
   if (!emailAccountId) return null;
 
-  const aliases =
-    state.accountId === emailAccountId ? state.aliases : [];
-  const warning =
-    state.accountId === emailAccountId ? state.warning : null;
-  const loadError =
-    state.accountId === emailAccountId ? state.loadError : null;
-  const selected =
-    state.accountId === emailAccountId
-      ? state.selected
-      : defaultFromEmail ?? "";
+  // While loading a newly selected account, never show the previous account's aliases.
+  const isCurrent = state.accountId === emailAccountId;
+  const aliases = isCurrent ? state.aliases : [];
+  const inventory = isCurrent ? state.inventory : [];
+  const warning = isCurrent ? state.warning : null;
+  const loadError = isCurrent ? state.loadError : null;
+  const selected = isCurrent ? state.selected : defaultFromEmail ?? "";
+  const accountEmail = isCurrent ? state.accountEmail : null;
+  const diagnostics = isCurrent ? state.diagnostics : null;
+  const excluded = inventory.filter((item) => !item.usable);
 
   return (
     <div className="space-y-2">
@@ -115,7 +142,9 @@ export function SenderAliasSelect({
       >
         {aliases.length === 0 ? (
           <option value="">
-            {pending ? "Loading sending addresses…" : "No sending addresses"}
+            {pending
+              ? "Loading sending addresses for this account…"
+              : "No verified sending addresses"}
           </option>
         ) : (
           aliases.map((alias) => (
@@ -130,15 +159,41 @@ export function SenderAliasSelect({
         )}
       </select>
       <p className="text-xs text-slate-500">
-        Only verified Gmail “Send mail as” identities from this connected account
-        can be used. The account stays the authenticated sender; the From header
-        uses the selected address.
+        Aliases are loaded from Gmail for{" "}
+        <span className="font-medium text-slate-700">
+          {accountEmail ?? "the selected account"}
+        </span>{" "}
+        only. Unverified identities cannot be selected.
       </p>
       {warning ? (
         <p className="text-xs text-amber-700">{warning}</p>
       ) : null}
       {loadError ? <p className="text-xs text-rose-600">{loadError}</p> : null}
       {error ? <p className="text-xs text-rose-600">{error}</p> : null}
+      {excluded.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <p className="font-medium text-slate-700">
+            Identities returned by Gmail but not available for sending
+          </p>
+          <ul className="mt-1 list-disc space-y-1 pl-4">
+            {excluded.map((item) => (
+              <li key={item.email}>
+                {item.email}: {item.statusLabel}
+                {item.verificationStatus
+                  ? ` (verificationStatus=${item.verificationStatus})`
+                  : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {diagnostics ? (
+        <p className="text-[11px] text-slate-400">
+          Debug: http={diagnostics.httpStatus ?? "—"}, returned=
+          {diagnostics.returnedCount}, usable={diagnostics.usableCount},
+          listScopeInDb={diagnostics.hasListScopeInDb ? "yes" : "no"}
+        </p>
+      ) : null}
     </div>
   );
 }

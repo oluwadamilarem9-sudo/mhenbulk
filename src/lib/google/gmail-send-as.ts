@@ -1,6 +1,6 @@
 /**
  * Gmail send-as (users.settings.sendAs) helpers for campaign From selection.
- * Listing requires gmail.modify (or gmail.settings.basic / mail.google.com).
+ * Listing requires gmail.modify, gmail.settings.basic, gmail.readonly, or mail.google.com.
  * Sending as a listed identity uses the existing gmail.send grant.
  */
 
@@ -9,6 +9,7 @@ export type GmailSendAsVerificationStatus =
   | "pending"
   | "failed"
   | "unspecified"
+  | "unknown"
   | string;
 
 export type GmailSendAsIdentity = {
@@ -27,6 +28,28 @@ export type UsableGmailSendAs = {
   replyToAddress: string | null;
   isPrimary: boolean;
   isDefault: boolean;
+};
+
+export type SendAsExclusionReason =
+  | "verified"
+  | "primary"
+  | "verification_pending"
+  | "verification_rejected"
+  | "verification_unspecified"
+  | "verification_unknown"
+  | "invalid_address";
+
+export type SendAsInventoryItem = {
+  email: string;
+  displayName: string | null;
+  replyToAddress: string | null;
+  isPrimary: boolean;
+  isDefault: boolean;
+  treatAsAlias: boolean;
+  verificationStatus: string | null;
+  usable: boolean;
+  statusLabel: string;
+  exclusionReason: SendAsExclusionReason;
 };
 
 export class GmailSendAsError extends Error {
@@ -64,6 +87,39 @@ type RawSendAs = {
   verificationStatus?: string;
 };
 
+export function normalizeVerificationStatus(
+  value: string | null | undefined,
+): string | null {
+  if (!value?.trim()) return null;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "accepted" ||
+    normalized === "verificationstatus_accepted"
+  ) {
+    return "accepted";
+  }
+  if (
+    normalized === "pending" ||
+    normalized === "verificationstatus_pending"
+  ) {
+    return "pending";
+  }
+  if (
+    normalized === "failed" ||
+    normalized === "verificationstatus_failed"
+  ) {
+    return "failed";
+  }
+  if (
+    normalized === "unspecified" ||
+    normalized === "verificationstatusunspecified" ||
+    normalized === "verification_status_unspecified"
+  ) {
+    return "unspecified";
+  }
+  return normalized;
+}
+
 export function parseGmailSendAsIdentity(raw: RawSendAs): GmailSendAsIdentity | null {
   const sendAsEmail = raw.sendAsEmail?.trim();
   if (!sendAsEmail || !sendAsEmail.includes("@")) return null;
@@ -76,16 +132,121 @@ export function parseGmailSendAsIdentity(raw: RawSendAs): GmailSendAsIdentity | 
     isPrimary: Boolean(raw.isPrimary),
     isDefault: Boolean(raw.isDefault),
     treatAsAlias: Boolean(raw.treatAsAlias),
-    verificationStatus: raw.verificationStatus?.trim() || null,
+    verificationStatus: normalizeVerificationStatus(raw.verificationStatus),
   };
 }
 
 /**
  * Primary identities are always usable. Custom aliases must be accepted by Google.
+ * verificationStatus is normalized case-insensitively ("accepted" / "ACCEPTED").
  */
 export function isUsableGmailSendAs(identity: GmailSendAsIdentity): boolean {
   if (identity.isPrimary) return true;
-  return identity.verificationStatus === "accepted";
+  return normalizeVerificationStatus(identity.verificationStatus) === "accepted";
+}
+
+export function describeSendAsUsability(
+  identity: GmailSendAsIdentity,
+): SendAsInventoryItem {
+  const status = normalizeVerificationStatus(identity.verificationStatus);
+  if (!identity.sendAsEmail.includes("@")) {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: identity.isPrimary,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: false,
+      statusLabel: "Invalid address",
+      exclusionReason: "invalid_address",
+    };
+  }
+  if (identity.isPrimary) {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: true,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: true,
+      statusLabel: "Verified and available (primary)",
+      exclusionReason: "primary",
+    };
+  }
+  if (status === "accepted") {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: false,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: true,
+      statusLabel: "Verified and available",
+      exclusionReason: "verified",
+    };
+  }
+  if (status === "pending") {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: false,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: false,
+      statusLabel: "Verification pending in Gmail",
+      exclusionReason: "verification_pending",
+    };
+  }
+  if (status === "failed") {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: false,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: false,
+      statusLabel: "Verification rejected in Gmail",
+      exclusionReason: "verification_rejected",
+    };
+  }
+  if (status === "unspecified") {
+    return {
+      email: identity.sendAsEmail,
+      displayName: identity.displayName,
+      replyToAddress: identity.replyToAddress,
+      isPrimary: false,
+      isDefault: identity.isDefault,
+      treatAsAlias: identity.treatAsAlias,
+      verificationStatus: status,
+      usable: false,
+      statusLabel: "Verification unspecified — not offered for sending",
+      exclusionReason: "verification_unspecified",
+    };
+  }
+  return {
+    email: identity.sendAsEmail,
+    displayName: identity.displayName,
+    replyToAddress: identity.replyToAddress,
+    isPrimary: false,
+    isDefault: identity.isDefault,
+    treatAsAlias: identity.treatAsAlias,
+    verificationStatus: status,
+    usable: false,
+    statusLabel: status
+      ? `Not usable (verificationStatus=${status})`
+      : "Not returned as verified by Gmail",
+    exclusionReason: "verification_unknown",
+  };
 }
 
 export function toUsableGmailSendAs(
@@ -120,6 +281,24 @@ export function filterUsableGmailSendAs(
   return usable;
 }
 
+export function buildSendAsInventory(
+  identities: GmailSendAsIdentity[],
+): SendAsInventoryItem[] {
+  const seen = new Set<string>();
+  const items: SendAsInventoryItem[] = [];
+  for (const identity of identities) {
+    if (seen.has(identity.sendAsEmail)) continue;
+    seen.add(identity.sendAsEmail);
+    items.push(describeSendAsUsability(identity));
+  }
+  return items.sort((a, b) => {
+    if (a.usable !== b.usable) return a.usable ? -1 : 1;
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+    return a.email.localeCompare(b.email);
+  });
+}
+
 export function findUsableGmailSendAs(
   identities: GmailSendAsIdentity[],
   requestedEmail: string,
@@ -147,9 +326,21 @@ export function primarySendAsFallback(
   };
 }
 
+export type ListGmailSendAsResult = {
+  identities: GmailSendAsIdentity[];
+  httpStatus: number;
+};
+
 export async function listGmailSendAsIdentities(
   accessToken: string,
 ): Promise<GmailSendAsIdentity[]> {
+  const result = await listGmailSendAsIdentitiesWithStatus(accessToken);
+  return result.identities;
+}
+
+export async function listGmailSendAsIdentitiesWithStatus(
+  accessToken: string,
+): Promise<ListGmailSendAsResult> {
   const response = await fetch(
     "https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs",
     {
@@ -162,9 +353,12 @@ export async function listGmailSendAsIdentities(
 
   if (response.ok) {
     const data = (await response.json()) as { sendAs?: RawSendAs[] };
-    return (data.sendAs ?? [])
-      .map(parseGmailSendAsIdentity)
-      .filter((item): item is GmailSendAsIdentity => Boolean(item));
+    return {
+      httpStatus: response.status,
+      identities: (data.sendAs ?? [])
+        .map(parseGmailSendAsIdentity)
+        .filter((item): item is GmailSendAsIdentity => Boolean(item)),
+    };
   }
 
   const body = await response.text();
